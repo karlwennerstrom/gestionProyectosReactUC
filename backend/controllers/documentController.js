@@ -183,6 +183,7 @@ const uploadDocument = async (req, res) => {
       });
 
       // 📧 ENVIAR NOTIFICACIONES POR EMAIL
+       // 📧 ENVIAR NOTIFICACIONES POR EMAIL
       try {
         // 1. Notificación al usuario (confirmación)
         const projectOwner = await User.findById(req.user.id);
@@ -209,7 +210,8 @@ const uploadDocument = async (req, res) => {
           const adminName = adminUser ? adminUser.full_name : 'Administrador';
           const requirementName = getRequirementName(stage_name, requirement_id);
           
-          await emailService.notifyDocumentUploaded(
+          // ← USAR EL NUEVO MÉTODO PARA REQUERIMIENTOS
+          await emailService.notifyDocumentUploadedForRequirement(
             adminEmail,
             adminName,
             projectOwner.email,

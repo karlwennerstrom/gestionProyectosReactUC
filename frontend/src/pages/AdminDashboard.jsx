@@ -1,13 +1,13 @@
 // frontend/src/pages/AdminDashboard.jsx
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { projectService, documentService } from '../services/api';
+import { projectService, documentService, api } from '../services/api'; // ← AGREGAR api aquí
 import { dateUtils } from '../services/api';
 import { InlineSpinner } from '../components/Common/LoadingSpinner';
-import RequirementCard from '../components/Common/RequirementCard'; // ← NUEVO IMPORT
+import RequirementCard from '../components/Common/RequirementCard';
 import ProjectDetailsView from '../components/Admin/ProjectDetailsView';
 import NotificationSettings from '../components/Admin/NotificationSettings';
-import { stageRequirements } from '../config/stageRequirements'; // ← NUEVO IMPORT
+import { stageRequirements } from '../config/stageRequirements';
 import toast from 'react-hot-toast';
 
 const AdminDashboard = () => {
@@ -49,34 +49,53 @@ const AdminDashboard = () => {
   };
 
   // ← NUEVA FUNCIÓN: Cargar requerimientos de un proyecto específico
-  const loadProjectRequirements = async (projectId) => {
-    if (projectRequirements[projectId]) {
-      return; // Ya están cargados
-    }
+ const loadProjectRequirements = async (projectId) => {
+  if (projectRequirements[projectId]) {
+    return; // Ya están cargados
+  }
 
-    try {
-      setLoadingRequirements(prev => ({ ...prev, [projectId]: true }));
-      
-      const response = await fetch(`/api/requirements/project/${projectId}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setProjectRequirements(prev => ({
-          ...prev,
-          [projectId]: data.data.requirements
-        }));
-      }
-    } catch (error) {
-      console.error('Error cargando requerimientos:', error);
-      toast.error('Error al cargar requerimientos');
-    } finally {
-      setLoadingRequirements(prev => ({ ...prev, [projectId]: false }));
+  try {
+    setLoadingRequirements(prev => ({ ...prev, [projectId]: true }));
+    
+    console.log(`📋 Cargando requerimientos para proyecto ${projectId}`);
+    
+    // ← CORREGIR LA URL - Usar la API correctamente configurada
+    const response = await api.get(`/requirements/project/${projectId}`);
+    
+    console.log('✅ Respuesta de requerimientos:', response.data);
+    
+    if (response.data.success) {
+      setProjectRequirements(prev => ({
+        ...prev,
+        [projectId]: response.data.data.requirements
+      }));
+      console.log(`📋 Requerimientos cargados para proyecto ${projectId}:`, response.data.data.requirements.length);
+    } else {
+      console.error('❌ Error en respuesta:', response.data.message);
+      toast.error('Error al cargar requerimientos: ' + response.data.message);
     }
-  };
+  } catch (error) {
+    console.error('❌ Error cargando requerimientos:', error);
+    
+    // Mostrar información más detallada del error
+    if (error.response) {
+      console.error('Response error:', error.response.status, error.response.data);
+      if (error.response.status === 404) {
+        toast.error('Endpoint de requerimientos no encontrado. Verifica que el servidor esté configurado correctamente.');
+      } else {
+        toast.error(`Error ${error.response.status}: ${error.response.data?.message || 'Error al cargar requerimientos'}`);
+      }
+    } else if (error.request) {
+      console.error('Request error:', error.request);
+      toast.error('Error de conexión al servidor');
+    } else {
+      console.error('Error:', error.message);
+      toast.error('Error al cargar requerimientos');
+    }
+  } finally {
+    setLoadingRequirements(prev => ({ ...prev, [projectId]: false }));
+  }
+};
 
   // ← NUEVA FUNCIÓN: Toggle expansión de proyecto
   const toggleProjectExpansion = async (projectId) => {
@@ -406,9 +425,9 @@ const AdminDashboard = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Documentos
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  {/* <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Prioridad
-                  </th>
+                  </th> */}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Fecha
                   </th>
@@ -448,7 +467,7 @@ const AdminDashboard = () => {
                             <span className="text-xs text-gray-500">documentos</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        {/* <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
                             <span className="mr-1">{getPriorityIcon(priority)}</span>
                             <span className={`text-sm ${getPriorityColor(priority)}`}>
@@ -457,7 +476,7 @@ const AdminDashboard = () => {
                                priority === 'normal' ? 'Normal' : 'Baja'}
                             </span>
                           </div>
-                        </td>
+                        </td> */}
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {dateUtils.formatDate(project.created_at)}
                         </td>

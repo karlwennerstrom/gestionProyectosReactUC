@@ -1,4 +1,4 @@
-// backend/server.js
+// backend/server.js - VERSIÓN CORREGIDA
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -12,7 +12,8 @@ const { testConnection, initDatabase } = require('./config/database');
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const documentRoutes = require('./routes/documents');
-const requirementRoutes = require('./routes/requirements'); // ← NUEVA RUTA
+const emailRoutes = require('./routes/email'); 
+const requirementRoutes = require('./routes/requirements'); 
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -33,11 +34,12 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Servir archivos estáticos (uploads)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Rutas de la API
+// ← RUTAS DE LA API - ORDEN IMPORTANTE
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/documents', documentRoutes);
-app.use('/api/requirements', requirementRoutes); // ← NUEVA RUTA
+app.use('/api/email', emailRoutes);
+app.use('/api/requirements', requirementRoutes); 
 
 // Ruta de salud del servidor
 app.get('/api/health', (req, res) => {
@@ -45,18 +47,26 @@ app.get('/api/health', (req, res) => {
     status: 'OK',
     message: 'Sistema UC Backend funcionando correctamente',
     timestamp: new Date().toISOString(),
-    version: '2.0.0', // ← Actualizada versión
+    version: '2.0.0',
     endpoints: {
       auth: '/api/auth',
       projects: '/api/projects', 
       documents: '/api/documents',
-      requirements: '/api/requirements' // ← NUEVO ENDPOINT
+      email: '/api/email', // ← AGREGAR
+      requirements: '/api/requirements' // ← VERIFICAR
     }
   });
 });
 
-// Manejo de rutas no encontradas
+// ← MIDDLEWARE DE DEBUGGING PARA VER TODAS LAS RUTAS
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
+
+// Manejo de rutas no encontradas - ← IMPORTANTE: DEBE IR AL FINAL
 app.use('*', (req, res) => {
+  console.log(`❌ Ruta no encontrada: ${req.method} ${req.originalUrl}`);
   res.status(404).json({
     success: false,
     message: `Ruta no encontrada: ${req.method} ${req.originalUrl}`,
@@ -66,7 +76,8 @@ app.use('*', (req, res) => {
       'POST /api/auth/login',
       'GET /api/projects/health',
       'GET /api/documents/health',
-      'GET /api/requirements/health' // ← NUEVO ENDPOINT
+      'GET /api/requirements/health', // ← VERIFICAR
+      'GET /api/requirements/project/:project_id' // ← AGREGAR ESTA LÍNEA
     ]
   });
 });
@@ -104,6 +115,7 @@ const startServer = async () => {
       console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
       console.log(`🔐 Auth endpoints: http://localhost:${PORT}/api/auth/health`);
+      console.log(`🗂️ Requirements endpoints: http://localhost:${PORT}/api/requirements/health`); // ← AGREGAR
       console.log(`📋 Endpoints disponibles:`);
       console.log(`   - GET  /api/health`);
       console.log(`   - GET  /api/auth/health`);
@@ -111,7 +123,8 @@ const startServer = async () => {
       console.log(`   - POST /api/auth/register`);
       console.log(`   - GET  /api/projects/health`);
       console.log(`   - GET  /api/documents/health`);
-      console.log(`   - GET  /api/requirements/health`); // ← NUEVO LOG
+      console.log(`   - GET  /api/requirements/health`); // ← AGREGAR
+      console.log(`   - GET  /api/requirements/project/:project_id`); // ← AGREGAR
       console.log('');
       console.log('🆕 NUEVAS FUNCIONALIDADES v2.0:');
       console.log('   ✅ Validación por requerimiento individual');

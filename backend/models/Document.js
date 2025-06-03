@@ -1,16 +1,17 @@
+// backend/models/Document.js - CON LÓGICA DE TRIGGERS INTEGRADA
 const { executeQuery, getOne, insertAndGetId } = require('../config/database');
 const path = require('path');
 const fs = require('fs').promises;
 
 class Document {
 
-  // Crear nuevo documento con requerimiento específico
+  // Crear nuevo documento con lógica de triggers integrada
   static async create(documentData) {
     try {
       const { 
         project_id, 
         stage_name, 
-        requirement_id, // NUEVO: ID del requerimiento específico
+        requirement_id,
         file_name, 
         original_name, 
         file_path, 
@@ -19,15 +20,108 @@ class Document {
         uploaded_by 
       } = documentData;
 
+      console.log('📝 Creando documento con datos:', {
+        project_id,
+        stage_name,
+        requirement_id,
+        file_name: file_name.substring(0, 20) + '...',
+        original_name
+      });
+
+      // PASO 1: Marcar documentos anteriores como no actuales (lógica del primer trigger)
+      await this.markPreviousDocumentsAsOld(project_id, stage_name, requirement_id);
+
+      // PASO 2: Insertar el nuevo documento
       const documentId = await insertAndGetId(`
         INSERT INTO documents 
-        (project_id, stage_name, requirement_id, file_name, original_name, file_path, file_size, mime_type, uploaded_by) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (project_id, stage_name, requirement_id, file_name, original_name, file_path, file_size, mime_type, uploaded_by, is_current) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)
       `, [project_id, stage_name, requirement_id, file_name, original_name, file_path, file_size, mime_type, uploaded_by]);
 
+      console.log('✅ Documento creado con ID:', documentId);
+
+      // PASO 3: Actualizar estado del requerimiento (lógica del segundo trigger)
+      await this.updateRequirementStatus(project_id, stage_name, requirement_id);
+
+      // PASO 4: Obtener el documento completo
       return await this.findById(documentId);
+
     } catch (error) {
+      console.error('❌ Error creando documento:', error);
       throw new Error(`Error creando documento: ${error.message}`);
+    }
+  }
+
+  // 🔄 LÓGICA DEL PRIMER TRIGGER: Marcar documentos anteriores como no actuales
+  static async markPreviousDocumentsAsOld(projectId, stageName, requirementId) {
+    try {
+      console.log('🔄 Marcando documentos anteriores como no actuales...');
+      
+      const result = await executeQuery(`
+        UPDATE documents 
+        SET is_current = FALSE 
+        WHERE project_id = ? 
+          AND stage_name = ? 
+          AND requirement_id = ? 
+          AND is_current = TRUE
+      `, [projectId, stageName, requirementId]);
+
+      console.log(`✅ ${result.affectedRows} documentos anteriores marcados como no actuales`);
+    } catch (error) {
+      console.error('❌ Error marcando documentos anteriores:', error);
+      // No lanzar error aquí para no bloquear el upload
+    }
+  }
+
+  // 🔄 LÓGICA DEL SEGUNDO TRIGGER: Actualizar estado del requerimiento
+  static async updateRequirementStatus(projectId, stageName, requirementId) {
+    try {
+      console.log('🔄 Actualizando estado del requerimiento...');
+      
+      // Verificar si existe una tabla de validaciones de requerimientos
+      const tableExists = await executeQuery(`
+        SELECT COUNT(*) as count 
+        FROM information_schema.tables 
+        WHERE table_schema = DATABASE() 
+          AND table_name = 'requirement_validations'
+      `);
+
+      if (tableExists[0].count > 0) {
+        // Si existe la tabla, actualizar el estado
+        const updateResult = await executeQuery(`
+          INSERT INTO requirement_validations 
+          (project_id, stage_name, requirement_id, status, updated_at)
+          VALUES (?, ?, ?, 'in-review', NOW())
+          ON DUPLICATE KEY UPDATE 
+            status = CASE 
+              WHEN status = 'rejected' THEN 'in-review'
+              WHEN status = 'pending' THEN 'in-review'
+              ELSE status 
+            END,
+            updated_at = NOW()
+        `, [projectId, stageName, requirementId]);
+
+        console.log('✅ Estado del requerimiento actualizado');
+      } else {
+        console.log('ℹ️ Tabla requirement_validations no existe, saltando actualización');
+      }
+
+      // También actualizar el estado de la etapa en project_stages
+      await executeQuery(`
+        UPDATE project_stages 
+        SET status = CASE 
+          WHEN status = 'rejected' THEN 'in-progress'
+          WHEN status = 'pending' THEN 'in-progress'
+          ELSE status 
+        END
+        WHERE project_id = ? AND stage_name = ?
+      `, [projectId, stageName]);
+
+      console.log('✅ Estado de la etapa actualizado si era necesario');
+
+    } catch (error) {
+      console.error('❌ Error actualizando estado del requerimiento:', error);
+      // No lanzar error aquí para no bloquear el upload
     }
   }
 
@@ -53,10 +147,10 @@ class Document {
     }
   }
 
-  // Obtener documentos por proyecto
-  static async getByProject(projectId) {
+  // Obtener documentos por proyecto (solo actuales por defecto)
+  static async getByProject(projectId, includeOld = false) {
     try {
-      const documents = await executeQuery(`
+      let query = `
         SELECT 
           d.*,
           u.full_name as uploaded_by_name,
@@ -64,9 +158,16 @@ class Document {
         FROM documents d
         JOIN users u ON d.uploaded_by = u.id
         WHERE d.project_id = ?
-        ORDER BY d.stage_name, d.requirement_id, d.uploaded_at DESC
-      `, [projectId]);
-      
+      `;
+
+      // Si no se incluyen documentos antiguos, filtrar solo los actuales
+      if (!includeOld) {
+        query += ` AND (d.is_current = TRUE OR d.is_current IS NULL)`;
+      }
+
+      query += ` ORDER BY d.stage_name, d.requirement_id, d.uploaded_at DESC`;
+
+      const documents = await executeQuery(query, [projectId]);
       return documents;
     } catch (error) {
       throw new Error(`Error obteniendo documentos del proyecto: ${error.message}`);
@@ -74,9 +175,9 @@ class Document {
   }
 
   // Obtener documentos por proyecto y etapa
-  static async getByProjectAndStage(projectId, stageName) {
+  static async getByProjectAndStage(projectId, stageName, includeOld = false) {
     try {
-      const documents = await executeQuery(`
+      let query = `
         SELECT 
           d.*,
           u.full_name as uploaded_by_name,
@@ -84,16 +185,22 @@ class Document {
         FROM documents d
         JOIN users u ON d.uploaded_by = u.id
         WHERE d.project_id = ? AND d.stage_name = ?
-        ORDER BY d.requirement_id, d.uploaded_at DESC
-      `, [projectId, stageName]);
-      
+      `;
+
+      if (!includeOld) {
+        query += ` AND (d.is_current = TRUE OR d.is_current IS NULL)`;
+      }
+
+      query += ` ORDER BY d.requirement_id, d.uploaded_at DESC`;
+
+      const documents = await executeQuery(query, [projectId, stageName]);
       return documents;
     } catch (error) {
       throw new Error(`Error obteniendo documentos de la etapa: ${error.message}`);
     }
   }
 
-  // NUEVO: Obtener documento por proyecto, etapa y requerimiento específico
+  // Obtener documento actual por requerimiento específico
   static async getByRequirement(projectId, stageName, requirementId) {
     try {
       const document = await getOne(`
@@ -103,7 +210,10 @@ class Document {
           u.username as uploaded_by_username
         FROM documents d
         JOIN users u ON d.uploaded_by = u.id
-        WHERE d.project_id = ? AND d.stage_name = ? AND d.requirement_id = ?
+        WHERE d.project_id = ? 
+          AND d.stage_name = ? 
+          AND d.requirement_id = ?
+          AND (d.is_current = TRUE OR d.is_current IS NULL)
         ORDER BY d.uploaded_at DESC
         LIMIT 1
       `, [projectId, stageName, requirementId]);
@@ -114,14 +224,15 @@ class Document {
     }
   }
 
-  // NUEVO: Obtener todos los documentos por requerimiento (para mostrar historial)
+  // Obtener historial completo de documentos por requerimiento
   static async getAllByRequirement(projectId, stageName, requirementId) {
     try {
       const documents = await executeQuery(`
         SELECT 
           d.*,
           u.full_name as uploaded_by_name,
-          u.username as uploaded_by_username
+          u.username as uploaded_by_username,
+          CASE WHEN d.is_current = TRUE THEN 'Actual' ELSE 'Histórico' END as version_status
         FROM documents d
         JOIN users u ON d.uploaded_by = u.id
         WHERE d.project_id = ? AND d.stage_name = ? AND d.requirement_id = ?
@@ -134,7 +245,7 @@ class Document {
     }
   }
 
-  // Obtener todos los documentos (para admin)
+  // Resto de métodos sin cambios importantes...
   static async getAll(filters = {}) {
     try {
       let query = `
@@ -177,6 +288,11 @@ class Document {
         params.push(`${filters.mime_type}%`);
       }
 
+      // Por defecto, solo mostrar documentos actuales
+      if (!filters.include_old) {
+        conditions.push('(d.is_current = TRUE OR d.is_current IS NULL)');
+      }
+
       if (conditions.length > 0) {
         query += ' WHERE ' + conditions.join(' AND ');
       }
@@ -189,7 +305,6 @@ class Document {
     }
   }
 
-  // Obtener documentos por usuario
   static async getByUser(userId) {
     try {
       const documents = await executeQuery(`
@@ -200,6 +315,7 @@ class Document {
         FROM documents d
         JOIN projects p ON d.project_id = p.id
         WHERE d.uploaded_by = ?
+          AND (d.is_current = TRUE OR d.is_current IS NULL)
         ORDER BY d.uploaded_at DESC
       `, [userId]);
       
@@ -209,26 +325,21 @@ class Document {
     }
   }
 
-  // Eliminar documento
   static async delete(id) {
     try {
-      // Obtener información del archivo antes de eliminarlo
       const document = await this.findById(id);
       if (!document) {
         throw new Error('Documento no encontrado');
       }
 
-      // Eliminar registro de la base de datos
       const result = await executeQuery('DELETE FROM documents WHERE id = ?', [id]);
       
       if (result.affectedRows > 0) {
-        // Intentar eliminar el archivo físico
         try {
           await fs.unlink(document.file_path);
           console.log(`Archivo eliminado: ${document.file_path}`);
         } catch (fileError) {
           console.warn(`No se pudo eliminar el archivo físico: ${fileError.message}`);
-          // No lanzar error, el registro ya se eliminó de la BD
         }
         return true;
       }
@@ -239,11 +350,15 @@ class Document {
     }
   }
 
-  // NUEVO: Verificar si existe un documento para un requerimiento específico
   static async existsForRequirement(projectId, stageName, requirementId) {
     try {
       const result = await getOne(
-        'SELECT COUNT(*) as count FROM documents WHERE project_id = ? AND stage_name = ? AND requirement_id = ?',
+        `SELECT COUNT(*) as count 
+         FROM documents 
+         WHERE project_id = ? 
+           AND stage_name = ? 
+           AND requirement_id = ?
+           AND (is_current = TRUE OR is_current IS NULL)`,
         [projectId, stageName, requirementId]
       );
       return result.count > 0;
@@ -252,11 +367,14 @@ class Document {
     }
   }
 
-  // Verificar si existe un documento para una etapa específica (legacy)
   static async existsForStage(projectId, stageName) {
     try {
       const result = await getOne(
-        'SELECT COUNT(*) as count FROM documents WHERE project_id = ? AND stage_name = ?',
+        `SELECT COUNT(*) as count 
+         FROM documents 
+         WHERE project_id = ? 
+           AND stage_name = ?
+           AND (is_current = TRUE OR is_current IS NULL)`,
         [projectId, stageName]
       );
       return result.count > 0;
@@ -265,14 +383,14 @@ class Document {
     }
   }
 
-  // NUEVO: Obtener estadísticas de requerimientos completados por etapa
   static async getRequirementStats(projectId, stageName) {
     try {
       const stats = await executeQuery(`
         SELECT 
           requirement_id,
           COUNT(*) as document_count,
-          MAX(uploaded_at) as last_upload
+          MAX(uploaded_at) as last_upload,
+          SUM(CASE WHEN is_current = TRUE THEN 1 ELSE 0 END) as current_documents
         FROM documents 
         WHERE project_id = ? AND stage_name = ?
         GROUP BY requirement_id
@@ -284,7 +402,7 @@ class Document {
     }
   }
 
-  // Obtener estadísticas de documentos
+  // Resto de métodos sin cambios...
   static async getStats() {
     try {
       const stats = await executeQuery(`
@@ -297,22 +415,22 @@ class Document {
           stage_name,
           COUNT(*) as documents_per_stage
         FROM documents
+        WHERE (is_current = TRUE OR is_current IS NULL)
         GROUP BY stage_name
         WITH ROLLUP
       `);
       
-      // Estadísticas por tipo de archivo
       const typeStats = await executeQuery(`
         SELECT 
           SUBSTRING_INDEX(mime_type, '/', 1) as file_type,
           COUNT(*) as count,
           SUM(file_size) as total_size
         FROM documents
+        WHERE (is_current = TRUE OR is_current IS NULL)
         GROUP BY SUBSTRING_INDEX(mime_type, '/', 1)
         ORDER BY count DESC
       `);
 
-      // NUEVO: Estadísticas por requerimiento
       const requirementStats = await executeQuery(`
         SELECT 
           stage_name,
@@ -321,6 +439,7 @@ class Document {
           COUNT(DISTINCT project_id) as projects_count
         FROM documents
         WHERE requirement_id IS NOT NULL
+          AND (is_current = TRUE OR is_current IS NULL)
         GROUP BY stage_name, requirement_id
         ORDER BY stage_name, requirement_id
       `);
@@ -335,7 +454,6 @@ class Document {
     }
   }
 
-  // Buscar documentos por nombre
   static async searchByName(searchTerm) {
     try {
       const documents = await executeQuery(`
@@ -347,7 +465,8 @@ class Document {
         FROM documents d
         JOIN users u ON d.uploaded_by = u.id
         JOIN projects p ON d.project_id = p.id
-        WHERE d.original_name LIKE ? OR d.file_name LIKE ?
+        WHERE (d.original_name LIKE ? OR d.file_name LIKE ?)
+          AND (d.is_current = TRUE OR d.is_current IS NULL)
         ORDER BY d.uploaded_at DESC
       `, [`%${searchTerm}%`, `%${searchTerm}%`]);
       
@@ -357,7 +476,6 @@ class Document {
     }
   }
 
-  // Actualizar información del documento (no el archivo)
   static async updateInfo(id, updateData) {
     try {
       const { original_name } = updateData;
@@ -373,7 +491,6 @@ class Document {
     }
   }
 
-  // Verificar acceso al documento
   static async canUserAccess(documentId, userId, userRole) {
     try {
       const document = await getOne(`
@@ -387,12 +504,10 @@ class Document {
         return { canAccess: false, reason: 'Documento no encontrado' };
       }
 
-      // Admin puede acceder a todo
       if (userRole === 'admin') {
         return { canAccess: true, document };
       }
 
-      // Usuario puede acceder si es el dueño del proyecto o subió el documento
       if (document.project_owner === userId || document.uploaded_by === userId) {
         return { canAccess: true, document };
       }
