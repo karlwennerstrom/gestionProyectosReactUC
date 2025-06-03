@@ -1,7 +1,7 @@
-// frontend/src/pages/AdminDashboard.jsx
+// frontend/src/pages/AdminDashboard.jsx - VERSIÓN COMPLETA CON MODAL
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { projectService, documentService, api } from '../services/api'; // ← AGREGAR api aquí
+import { projectService, documentService, api, fileUtils } from '../services/api';
 import { dateUtils } from '../services/api';
 import { InlineSpinner } from '../components/Common/LoadingSpinner';
 import RequirementCard from '../components/Common/RequirementCard';
@@ -19,10 +19,16 @@ const AdminDashboard = () => {
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [showNotificationSettings, setShowNotificationSettings] = useState(false);
 
-  // ← NUEVOS ESTADOS PARA REQUIREMENT MANAGEMENT
+  // Estados para requirement management
   const [expandedProjects, setExpandedProjects] = useState(new Set());
   const [projectRequirements, setProjectRequirements] = useState({});
   const [loadingRequirements, setLoadingRequirements] = useState({});
+
+  // Estados para modal de historial de documentos
+  const [showDocumentHistoryModal, setShowDocumentHistoryModal] = useState(false);
+  const [selectedRequirementDocs, setSelectedRequirementDocs] = useState([]);
+  const [selectedRequirementInfo, setSelectedRequirementInfo] = useState(null);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -48,56 +54,56 @@ const AdminDashboard = () => {
     }
   };
 
-  // ← NUEVA FUNCIÓN: Cargar requerimientos de un proyecto específico
- const loadProjectRequirements = async (projectId) => {
-  if (projectRequirements[projectId]) {
-    return; // Ya están cargados
-  }
-
-  try {
-    setLoadingRequirements(prev => ({ ...prev, [projectId]: true }));
-    
-    console.log(`📋 Cargando requerimientos para proyecto ${projectId}`);
-    
-    // ← CORREGIR LA URL - Usar la API correctamente configurada
-    const response = await api.get(`/requirements/project/${projectId}`);
-    
-    console.log('✅ Respuesta de requerimientos:', response.data);
-    
-    if (response.data.success) {
-      setProjectRequirements(prev => ({
-        ...prev,
-        [projectId]: response.data.data.requirements
-      }));
-      console.log(`📋 Requerimientos cargados para proyecto ${projectId}:`, response.data.data.requirements.length);
-    } else {
-      console.error('❌ Error en respuesta:', response.data.message);
-      toast.error('Error al cargar requerimientos: ' + response.data.message);
+  // Cargar requerimientos de un proyecto específico
+  const loadProjectRequirements = async (projectId) => {
+    if (projectRequirements[projectId]) {
+      return; // Ya están cargados
     }
-  } catch (error) {
-    console.error('❌ Error cargando requerimientos:', error);
-    
-    // Mostrar información más detallada del error
-    if (error.response) {
-      console.error('Response error:', error.response.status, error.response.data);
-      if (error.response.status === 404) {
-        toast.error('Endpoint de requerimientos no encontrado. Verifica que el servidor esté configurado correctamente.');
+
+    try {
+      setLoadingRequirements(prev => ({ ...prev, [projectId]: true }));
+      
+      console.log(`📋 Cargando requerimientos para proyecto ${projectId}`);
+      
+      // ✅ CORREGIDO: Usar api correctamente configurada
+      const response = await api.get(`/requirements/project/${projectId}`);
+      
+      console.log('✅ Respuesta de requerimientos:', response.data);
+      
+      if (response.data.success) {
+        setProjectRequirements(prev => ({
+          ...prev,
+          [projectId]: response.data.data.requirements
+        }));
+        console.log(`📋 Requerimientos cargados para proyecto ${projectId}:`, response.data.data.requirements.length);
       } else {
-        toast.error(`Error ${error.response.status}: ${error.response.data?.message || 'Error al cargar requerimientos'}`);
+        console.error('❌ Error en respuesta:', response.data.message);
+        toast.error('Error al cargar requerimientos: ' + response.data.message);
       }
-    } else if (error.request) {
-      console.error('Request error:', error.request);
-      toast.error('Error de conexión al servidor');
-    } else {
-      console.error('Error:', error.message);
-      toast.error('Error al cargar requerimientos');
+    } catch (error) {
+      console.error('❌ Error cargando requerimientos:', error);
+      
+      // Mostrar información más detallada del error
+      if (error.response) {
+        console.error('Response error:', error.response.status, error.response.data);
+        if (error.response.status === 404) {
+          toast.error('Endpoint de requerimientos no encontrado. Verifica que el servidor esté configurado correctamente.');
+        } else {
+          toast.error(`Error ${error.response.status}: ${error.response.data?.message || 'Error al cargar requerimientos'}`);
+        }
+      } else if (error.request) {
+        console.error('Request error:', error.request);
+        toast.error('Error de conexión al servidor');
+      } else {
+        console.error('Error:', error.message);
+        toast.error('Error al cargar requerimientos');
+      }
+    } finally {
+      setLoadingRequirements(prev => ({ ...prev, [projectId]: false }));
     }
-  } finally {
-    setLoadingRequirements(prev => ({ ...prev, [projectId]: false }));
-  }
-};
+  };
 
-  // ← NUEVA FUNCIÓN: Toggle expansión de proyecto
+  // Toggle expansión de proyecto
   const toggleProjectExpansion = async (projectId) => {
     const newExpanded = new Set(expandedProjects);
     
@@ -112,22 +118,24 @@ const AdminDashboard = () => {
     setExpandedProjects(newExpanded);
   };
 
-  // ← NUEVA FUNCIÓN: Actualizar estado de requerimiento
+  // ✅ CORREGIDO: Actualizar estado de requerimiento
   const handleRequirementStatusUpdate = async (requirement, newStatus, comments) => {
     try {
-      const response = await fetch(`/api/requirements/${requirement.project_id}/${requirement.stage_name}/${requirement.requirement_id}/status`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          status: newStatus,
-          admin_comments: comments
-        })
+      console.log('🔄 Actualizando requerimiento:', {
+        project_id: requirement.project_id,
+        stage_name: requirement.stage_name,
+        requirement_id: requirement.requirement_id,
+        newStatus,
+        comments
       });
 
-      if (response.ok) {
+      // ✅ USAR API EN LUGAR DE FETCH
+      const response = await api.put(`/requirements/${requirement.project_id}/${requirement.stage_name}/${requirement.requirement_id}/status`, {
+        status: newStatus,
+        admin_comments: comments
+      });
+
+      if (response.data.success) {
         toast.success(`Requerimiento ${newStatus === 'approved' ? 'aprobado' : 'rechazado'} exitosamente`);
         
         // Actualizar los requerimientos en el estado local
@@ -145,55 +153,58 @@ const AdminDashboard = () => {
         // Recargar datos del proyecto
         await loadData();
       } else {
-        const errorData = await response.json();
-        toast.error(errorData.message || 'Error al actualizar requerimiento');
+        toast.error(response.data.message || 'Error al actualizar requerimiento');
       }
     } catch (error) {
       console.error('Error actualizando requerimiento:', error);
-      toast.error('Error al actualizar requerimiento');
+      toast.error(error.response?.data?.message || 'Error al actualizar requerimiento');
     }
   };
 
-  // ← NUEVA FUNCIÓN: Ver documentos de requerimiento
+  // ✅ CORREGIDO: Ver documentos de requerimiento CON MODAL
   const handleViewRequirementDocuments = async (requirement) => {
     try {
-      const response = await fetch(`/api/requirements/${requirement.project_id}/${requirement.stage_name}/${requirement.requirement_id}/documents`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
+      setLoadingDocuments(true);
+      setSelectedRequirementInfo(requirement);
+      setShowDocumentHistoryModal(true);
 
-      if (response.ok) {
-        const data = await response.json();
-        // Aquí puedes abrir un modal con el historial de documentos
-        console.log('Documentos del requerimiento:', data.data.documents);
-        toast.info(`${data.data.documents.length} documentos encontrados para este requerimiento`);
+      console.log('📄 Cargando documentos del requerimiento:', requirement);
+
+      // ✅ USAR API EN LUGAR DE FETCH
+      const response = await api.get(`/requirements/${requirement.project_id}/${requirement.stage_name}/${requirement.requirement_id}/documents`);
+
+      if (response.data.success) {
+        const documents = response.data.data.documents;
+        setSelectedRequirementDocs(documents);
+        console.log('Documentos del requerimiento:', documents);
+      } else {
+        toast.error(response.data.message || 'Error al cargar documentos');
+        setSelectedRequirementDocs([]);
       }
     } catch (error) {
       console.error('Error cargando documentos del requerimiento:', error);
-      toast.error('Error al cargar documentos');
+      toast.error(error.response?.data?.message || 'Error al cargar documentos');
+      setSelectedRequirementDocs([]);
+    } finally {
+      setLoadingDocuments(false);
     }
   };
 
-  // ← NUEVA FUNCIÓN: Aprobar toda una etapa
+  // ✅ CORREGIDO: Aprobar toda una etapa
   const handleApproveStage = async (projectId, stageName) => {
     if (!window.confirm(`¿Estás seguro de que quieres aprobar todos los requerimientos de la etapa ${stageName}?`)) {
       return;
     }
 
     try {
-      const response = await fetch(`/api/requirements/${projectId}/${stageName}/approve-all`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          admin_comments: `Etapa ${stageName} aprobada completamente`
-        })
+      console.log('✅ Aprobando etapa completa:', { projectId, stageName });
+
+      // ✅ USAR API EN LUGAR DE FETCH
+      const response = await api.put(`/requirements/${projectId}/${stageName}/approve-all`, {
+        admin_comments: `Etapa ${stageName} aprobada completamente`
       });
 
-      if (response.ok) {
+      if (response.data.success) {
         toast.success(`Etapa ${stageName} aprobada completamente`);
         
         // Recargar requerimientos del proyecto
@@ -201,12 +212,21 @@ const AdminDashboard = () => {
         await loadProjectRequirements(projectId);
         await loadData();
       } else {
-        const errorData = await response.json();
-        toast.error(errorData.message || 'Error al aprobar etapa');
+        toast.error(response.data.message || 'Error al aprobar etapa');
       }
     } catch (error) {
       console.error('Error aprobando etapa:', error);
-      toast.error('Error al aprobar etapa');
+      toast.error(error.response?.data?.message || 'Error al aprobar etapa');
+    }
+  };
+
+  // Función para descargar documento
+  const downloadDocument = async (documentId, fileName) => {
+    try {
+      await fileUtils.downloadFile(documentId, fileName);
+      toast.success('Archivo descargado');
+    } catch (error) {
+      toast.error('Error al descargar archivo');
     }
   };
 
@@ -264,7 +284,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // ← NUEVA FUNCIÓN: Obtener requerimientos agrupados por etapa
+  // Obtener requerimientos agrupados por etapa
   const getRequirementsByStage = (projectId) => {
     const requirements = projectRequirements[projectId] || [];
     const grouped = {};
@@ -286,7 +306,7 @@ const AdminDashboard = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header - SIN CAMBIOS */}
+      {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
@@ -330,7 +350,7 @@ const AdminDashboard = () => {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Estadísticas - SIN CAMBIOS */}
+        {/* Estadísticas */}
         {stats && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
             <div className="bg-white p-6 rounded-lg shadow">
@@ -402,7 +422,7 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        {/* ← TABLA DE PROYECTOS ACTUALIZADA */}
+        {/* Tabla de Proyectos */}
         <div className="bg-white shadow-sm rounded-lg">
           <div className="px-6 py-4 border-b border-gray-200">
             <h3 className="text-lg font-medium text-gray-900">Proyectos para Revisión</h3>
@@ -425,9 +445,6 @@ const AdminDashboard = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Documentos
                   </th>
-                  {/* <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Prioridad
-                  </th> */}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Fecha
                   </th>
@@ -467,16 +484,6 @@ const AdminDashboard = () => {
                             <span className="text-xs text-gray-500">documentos</span>
                           </div>
                         </td>
-                        {/* <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center">
-                            <span className="mr-1">{getPriorityIcon(priority)}</span>
-                            <span className={`text-sm ${getPriorityColor(priority)}`}>
-                              {priority === 'high' ? 'Alta' :
-                               priority === 'medium' ? 'Media' :
-                               priority === 'normal' ? 'Normal' : 'Baja'}
-                            </span>
-                          </div>
-                        </td> */}
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {dateUtils.formatDate(project.created_at)}
                         </td>
@@ -498,10 +505,10 @@ const AdminDashboard = () => {
                         </td>
                       </tr>
 
-                      {/* ← FILA EXPANDIDA CON REQUIREMENT CARDS */}
+                      {/* Fila expandida con RequirementCards */}
                       {isExpanded && (
                         <tr>
-                          <td colSpan="7" className="px-6 py-4 bg-gray-50">
+                          <td colSpan="6" className="px-6 py-4 bg-gray-50">
                             {loadingRequirements[project.id] ? (
                               <div className="flex justify-center py-8">
                                 <InlineSpinner text="Cargando requerimientos..." />
@@ -618,6 +625,126 @@ const AdminDashboard = () => {
         <NotificationSettings
           onClose={() => setShowNotificationSettings(false)}
         />
+      )}
+
+      {/* Modal de Historial de Documentos */}
+      {showDocumentHistoryModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden">
+            {/* Header */}
+            <div className="bg-blue-600 text-white p-6">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="text-lg font-medium mb-2">📄 Historial de Documentos</h3>
+                  {selectedRequirementInfo && (
+                    <div className="text-blue-100 text-sm">
+                      <p><strong>Requerimiento:</strong> {selectedRequirementInfo.requirement_name}</p>
+                      <p><strong>Proyecto:</strong> {selectedRequirementInfo.project_id}</p>
+                      <p><strong>Etapa:</strong> {selectedRequirementInfo.stage_name}</p>
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowDocumentHistoryModal(false)}
+                  className="text-white hover:text-gray-200 text-2xl font-bold"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-180px)]">
+              {loadingDocuments ? (
+                <div className="flex justify-center py-8">
+                  <InlineSpinner text="Cargando historial de documentos..." />
+                </div>
+              ) : selectedRequirementDocs.length === 0 ? (
+                <div className="text-center py-8">
+                  <div className="text-4xl mb-4">📄</div>
+                  <h4 className="text-lg font-medium text-gray-900 mb-2">Sin documentos</h4>
+                  <p className="text-gray-500">No hay documentos subidos para este requerimiento</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between mb-6">
+                    <h4 className="text-lg font-medium text-gray-900">
+                      {selectedRequirementDocs.length} documento{selectedRequirementDocs.length !== 1 ? 's' : ''} encontrado{selectedRequirementDocs.length !== 1 ? 's' : ''}
+                    </h4>
+                    <span className="text-sm text-gray-500">
+                      Ordenados por fecha (más reciente primero)
+                    </span>
+                  </div>
+
+                  {selectedRequirementDocs.map((doc, index) => (
+                    <div key={doc.id} className={`border rounded-lg p-4 ${doc.is_current ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white'}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3 flex-1">
+                          <span className="text-2xl">
+                            {fileUtils.getFileTypeIcon(doc.mime_type)}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h5 className="text-sm font-medium text-gray-900 truncate">
+                                {doc.original_name || doc.name}
+                              </h5>
+                              {doc.is_current && (
+                                <span className="inline-flex px-2 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full">
+                                  Actual
+                                </span>
+                              )}
+                              {index === 0 && !doc.is_current && (
+                                <span className="inline-flex px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
+                                  Más reciente
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 text-xs text-gray-500">
+                              <span>Subido por: {doc.uploaded_by_name || 'Usuario'}</span>
+                              <span className="mx-2">•</span>
+                              <span>{dateUtils.formatDateTime(doc.uploaded_at)}</span>
+                              <span className="mx-2">•</span>
+                              <span>{fileUtils.formatFileSize(doc.file_size || 0)}</span>
+                            </div>
+                            {doc.version_status && (
+                              <div className="mt-1">
+                                <span className={`text-xs px-2 py-1 rounded ${
+                                  doc.version_status === 'Actual' 
+                                    ? 'bg-green-100 text-green-700' 
+                                    : 'bg-gray-100 text-gray-700'
+                                }`}>
+                                  {doc.version_status}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => downloadDocument(doc.id, doc.original_name || doc.name)}
+                            className="inline-flex items-center px-3 py-1 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50"
+                          >
+                            ⬇️ Descargar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-gray-200 p-4 bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setShowDocumentHistoryModal(false)}
+                className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

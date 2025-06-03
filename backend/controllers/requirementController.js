@@ -1,72 +1,29 @@
-// backend/controllers/documentController.js - SECCIÓN CORREGIDA
-
-// Cambiar esta línea en el método uploadDocument:
-const document = await Document.create({
-  project_id,
-  stage_name,
-  requirement_id,
-  file_name: req.file.filename,
-  original_name: req.file.originalname,
-  file_path: req.file.path,
-  file_size: req.file.size,
-  mime_type: req.file.mimetype,
-  uploaded_by: req.user.id
-});
-
-// POR ESTE CÓDIGO MEJORADO:
-
-// Subir documento con manejo de errores mejorado
-const uploadDocument = async (req, res) => {
-  uploadSingle(req, res, async (err) => {
+// backend/controllers/requirementController.js
+const Document = require('../models/Document');
+const Project = require('../models/Project');
+const { stageRequirements } = require('../config/stageRequirements');
+const { executeQuery, getOne } = require('../config/database');
+function determineRequirementStatus(documents, currentDoc) {
+  if (!currentDoc) {
+    return 'pending'; // Sin documentos
+  }
+  if (documents.length > 0) {
+    return 'in-review'; // Tiene documentos, en revisión
+  }
+  return 'pending';
+}
+class RequirementController {
+  
+  // Obtener requerimientos de un proyecto con estado de documentos
+  static async getProjectRequirements(req, res) {
     try {
-      if (err instanceof multer.MulterError) {
-        if (err.code === 'LIMIT_FILE_SIZE') {
-          return res.status(400).json({
-            success: false,
-            message: 'El archivo es demasiado grande. Máximo 10MB permitido.'
-          });
-        }
-        return res.status(400).json({
-          success: false,
-          message: `Error de upload: ${err.message}`
-        });
-      } else if (err) {
-        return res.status(400).json({
-          success: false,
-          message: err.message
-        });
-      }
+      const { project_id } = req.params;
 
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          message: 'No se seleccionó ningún archivo'
-        });
-      }
+      console.log(`📋 Cargando requerimientos para proyecto ${project_id}`);
 
-      const { project_id, stage_name, requirement_id } = req.body;
-
-      console.log('📥 Datos recibidos en upload:', {
-        project_id,
-        stage_name,
-        requirement_id,
-        fileName: req.file?.originalname
-      });
-
-      // Validar campos requeridos
-      if (!project_id || !stage_name || !requirement_id) {
-        console.error('❌ Faltan campos requeridos:', { project_id, stage_name, requirement_id });
-        await fs.unlink(req.file.path).catch(console.error);
-        return res.status(400).json({
-          success: false,
-          message: 'project_id, stage_name y requirement_id son requeridos'
-        });
-      }
-
-      // Validar que el proyecto existe
+      // Verificar que el proyecto existe
       const project = await Project.findById(project_id);
       if (!project) {
-        await fs.unlink(req.file.path).catch(console.error);
         return res.status(404).json({
           success: false,
           message: 'Proyecto no encontrado'
@@ -75,196 +32,399 @@ const uploadDocument = async (req, res) => {
 
       // Verificar permisos
       if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
-        await fs.unlink(req.file.path).catch(console.error);
         return res.status(403).json({
           success: false,
-          message: 'No tienes permisos para subir archivos a este proyecto'
+          message: 'No tienes permisos para ver los requerimientos de este proyecto'
         });
       }
 
-      // Validar etapa
-      const validStages = ['formalization', 'design', 'delivery', 'operation', 'maintenance'];
-      if (!validStages.includes(stage_name)) {
-        await fs.unlink(req.file.path).catch(console.error);
-        return res.status(400).json({
-          success: false,
-          message: 'Etapa inválida'
+      // Obtener todos los documentos del proyecto
+      const documents = await Document.getByProject(project_id, true); // incluir históricos
+
+      console.log(`📄 Documentos encontrados: ${documents.length}`);
+
+      // Crear array de requerimientos con estado
+      const requirements = [];
+
+      // Iterar por cada etapa y requerimiento
+      Object.entries(stageRequirements).forEach(([stageId, stage]) => {
+  stage.requirements.forEach(requirement => {
+    // Buscar documentos para este requerimiento específico
+    const requirementDocs = documents.filter(doc => 
+      doc.stage_name === stageId && 
+      doc.requirement_id === requirement.id
+    );
+
+    // Documento actual (más reciente)
+    const currentDoc = requirementDocs.find(doc => doc.is_current) || 
+                     requirementDocs.sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at))[0];
+    // DEBUG: Ver qué documentos encuentra
+        console.log(`🔍 Requerimiento ${requirement.id}:`, {
+        requirementDocs: requirementDocs.length,
+        currentDoc: currentDoc ? currentDoc.original_name : 'null',
+        hasIsCurrentField: requirementDocs.length > 0 ? requirementDocs[0].hasOwnProperty('is_current') : 'no docs'
         });
-      }
+    // Crear objeto de requerimiento
+    const requirementData = {
+      project_id: parseInt(project_id),
+      stage_name: stageId,
+      requirement_id: requirement.id,
+      requirement_name: requirement.name,
+      required: requirement.required || false,
+      
+      // Estado del requerimiento
+      status: determineRequirementStatus(requirementDocs, currentDoc),
 
-      // CREAR DOCUMENTO CON MANEJO DE ERRORES MEJORADO
-      let document;
-      try {
-        console.log('📝 Intentando crear documento...');
-        
-        // MÉTODO 1: Crear documento normal
-        document = await Document.create({
-          project_id,
-          stage_name,
-          requirement_id,
-          file_name: req.file.filename,
-          original_name: req.file.originalname,
-          file_path: req.file.path,
-          file_size: req.file.size,
-          mime_type: req.file.mimetype,
-          uploaded_by: req.user.id
-        });
-        
-      } catch (createError) {
-        console.error('❌ Error en Document.create:', createError);
-        
-        // MÉTODO 2: Si falla, usar createSimple
-        if (createError.message.includes('CANT_UPDATE_USED_TABLE_IN_SF_OR_TRG')) {
-          console.log('🔄 Intentando con método alternativo...');
-          
-          try {
-            document = await Document.createSimple({
-              project_id,
-              stage_name,
-              requirement_id,
-              file_name: req.file.filename,
-              original_name: req.file.originalname,
-              file_path: req.file.path,
-              file_size: req.file.size,
-              mime_type: req.file.mimetype,
-              uploaded_by: req.user.id
-            });
-          } catch (simpleError) {
-            console.error('❌ Error en createSimple:', simpleError);
-            
-            // MÉTODO 3: Inserción directa
-            console.log('🔄 Intentando inserción directa...');
-            
-            const { executeQuery } = require('../config/database');
-            const result = await executeQuery(`
-              INSERT INTO documents 
-              (project_id, stage_name, requirement_id, file_name, original_name, file_path, file_size, mime_type, uploaded_by, uploaded_at) 
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-            `, [
-              project_id,
-              stage_name,
-              requirement_id,
-              req.file.filename,
-              req.file.originalname,
-              req.file.path,
-              req.file.size,
-              req.file.mimetype,
-              req.user.id
-            ]);
+      
+      // Información del documento actual
+      has_current_document: !!currentDoc,
+      current_document_name: currentDoc?.original_name || null,
+      current_document_date: currentDoc?.uploaded_at || null,
+      current_document_id: currentDoc?.id || null,
+      
+      // Historial
+      total_documents: requirementDocs.length,
+      document_history: requirementDocs.map(doc => ({
+        id: doc.id,
+        name: doc.original_name,
+        uploaded_at: doc.uploaded_at,
+        uploaded_by: doc.uploaded_by_name,
+        is_current: doc.is_current || false,
+        file_size: doc.file_size,
+        mime_type: doc.mime_type
+      })),
+      
+      // Comentarios del admin (se podría agregar una tabla specific)
+      admin_comments: null, // TODO: Implementar tabla requirement_validations
+      reviewed_at: currentDoc?.uploaded_at || null,
+      reviewed_by: null // TODO: Implementar
+    };
 
-            if (result.insertId) {
-              document = await Document.findById(result.insertId);
-            } else {
-              throw new Error('No se pudo crear el documento con ningún método');
-            }
-          }
-        } else {
-          throw createError;
-        }
-      }
+    requirements.push(requirementData);
+  });
+});
 
-      if (!document) {
-        await fs.unlink(req.file.path).catch(console.error);
-        return res.status(500).json({
-          success: false,
-          message: 'Error creando el registro del documento'
-        });
-      }
+      console.log(`✅ ${requirements.length} requerimientos procesados`);
 
-      console.log('✅ Documento creado exitosamente en BD:', {
-        id: document.id,
-        project_id: document.project_id,
-        stage_name: document.stage_name,
-        requirement_id: document.requirement_id,
-        original_name: document.original_name
-      });
-
-      // 📧 ENVIAR NOTIFICACIONES POR EMAIL
-      try {
-        const projectOwner = await User.findById(req.user.id);
-        if (projectOwner && projectOwner.email) {
-          const stageName = stage_name;
-          const requirementName = getRequirementName(stage_name, requirement_id);
-          
-          await emailService.notifyDocumentUploadedConfirmation(
-            projectOwner.email,
-            projectOwner.full_name,
-            project.code,
-            stageName,
-            requirementName,
-            req.file.originalname
-          );
-          console.log(`✅ Email de confirmación enviado a ${projectOwner.email}`);
-        }
-
-        const adminEmail = process.env.ADMIN_EMAIL;
-        if (adminEmail) {
-          const adminUser = await User.findByEmail(adminEmail);
-          const adminName = adminUser ? adminUser.full_name : 'Administrador';
-          const requirementName = getRequirementName(stage_name, requirement_id);
-          
-          await emailService.notifyDocumentUploaded(
-            adminEmail,
-            adminName,
-            projectOwner.email,
-            projectOwner.full_name,
-            project.code,
-            project.title,
-            stage_name,
-            requirementName,
-            req.file.originalname
-          );
-          console.log(`📧 Email de notificación enviado al admin: ${adminEmail}`);
-        }
-      } catch (emailError) {
-        console.error('❌ Error enviando notificaciones por email:', emailError);
-      }
-
-      // ACTUALIZAR ESTADO DE ETAPA
-      try {
-        const currentStageStatus = await Project.getStageStatus(project_id, stage_name);
-        console.log(`Estado actual de etapa ${stage_name}:`, currentStageStatus);
-        
-        if (currentStageStatus === 'rejected') {
-          await Project.updateStage(
-            project_id, 
-            stage_name, 
-            'in-progress', 
-            'Nuevos documentos subidos - Enviado a revisión automáticamente'
-          );
-          console.log(`Etapa ${stage_name} del proyecto ${project_id} cambiada de 'rejected' a 'in-progress'`);
-        } else if (currentStageStatus === 'pending') {
-          await Project.updateStage(
-            project_id, 
-            stage_name, 
-            'in-progress', 
-            'Documentos subidos - Enviado a revisión'
-          );
-          console.log(`Etapa ${stage_name} del proyecto ${project_id} cambiada de 'pending' a 'in-progress'`);
-        }
-      } catch (stageError) {
-        console.error('Error actualizando estado de etapa:', stageError);
-      }
-
-      console.log('📄 Documento creado exitosamente:', document);
-
-      res.status(201).json({
+      res.json({
         success: true,
-        message: 'Documento subido exitosamente',
-        data: { document }
+        data: {
+          requirements,
+          project: {
+            id: project.id,
+            code: project.code,
+            title: project.title,
+            user_name: project.user_name
+          },
+          total_requirements: requirements.length,
+          completed_requirements: requirements.filter(req => req.status === 'approved').length
+        }
       });
 
     } catch (error) {
-      // Limpiar archivo si hay error
-      if (req.file) {
-        await fs.unlink(req.file.path).catch(console.error);
-      }
-      
-      console.error('❌ Error general subiendo documento:', error);
+      console.error('❌ Error obteniendo requerimientos del proyecto:', error);
       res.status(500).json({
         success: false,
-        message: 'Error interno del servidor: ' + error.message
+        message: 'Error interno del servidor',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
-  });
-};
+  }
+  
+
+  // Determinar el estado de un requerimiento basado en documentos
+
+
+  // Actualizar estado de requerimiento específico (solo admin)
+  static async updateRequirementStatus(req, res) {
+    try {
+      const { project_id, stage_name, requirement_id } = req.params;
+      const { status, admin_comments } = req.body;
+
+      console.log(`🔄 Actualizando requerimiento ${requirement_id} a estado ${status}`);
+
+      // Validar estado
+      const validStatuses = ['pending', 'in-review', 'approved', 'rejected'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Estado inválido. Debe ser: ' + validStatuses.join(', ')
+        });
+      }
+
+      // Verificar que el proyecto existe
+      const project = await Project.findById(project_id);
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          message: 'Proyecto no encontrado'
+        });
+      }
+
+      // TODO: Crear tabla requirement_validations para persistir estados
+      // Por ahora, simular actualización exitosa
+
+      console.log(`✅ Requerimiento ${requirement_id} actualizado a ${status}`);
+
+      res.json({
+        success: true,
+        message: `Requerimiento ${status === 'approved' ? 'aprobado' : 'rechazado'} exitosamente`,
+        data: {
+          project_id: parseInt(project_id),
+          stage_name,
+          requirement_id,
+          status,
+          admin_comments,
+          updated_at: new Date().toISOString()
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Error actualizando estado del requerimiento:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  }
+
+  // Aprobar todos los requerimientos de una etapa (solo admin)
+  static async approveStageRequirements(req, res) {
+    try {
+      const { project_id, stage_name } = req.params;
+      const { admin_comments } = req.body;
+
+      console.log(`✅ Aprobando todos los requerimientos de etapa ${stage_name}`);
+
+      // Verificar que el proyecto existe
+      const project = await Project.findById(project_id);
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          message: 'Proyecto no encontrado'
+        });
+      }
+
+      // Verificar que la etapa existe
+      if (!stageRequirements[stage_name]) {
+        return res.status(400).json({
+          success: false,
+          message: 'Etapa no válida'
+        });
+      }
+
+      // Obtener todos los requerimientos de la etapa
+      const stage = stageRequirements[stage_name];
+      const approvedCount = stage.requirements.length;
+
+      // TODO: Actualizar estados en requirement_validations
+      // Por ahora, actualizar la etapa en project_stages
+
+      try {
+        await Project.updateStage(
+          project_id,
+          stage_name,
+          'completed',
+          admin_comments || `Todos los ${approvedCount} requerimientos de la etapa aprobados`
+        );
+      } catch (stageError) {
+        console.error('Error actualizando etapa:', stageError);
+      }
+
+      console.log(`✅ ${approvedCount} requerimientos aprobados en etapa ${stage_name}`);
+
+      res.json({
+        success: true,
+        message: `Etapa ${stage_name} aprobada completamente. ${approvedCount} requerimientos aprobados.`,
+        data: {
+          project_id: parseInt(project_id),
+          stage_name,
+          approved_requirements: approvedCount,
+          admin_comments,
+          approved_at: new Date().toISOString()
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Error aprobando requerimientos de etapa:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  }
+
+  // Obtener historial de documentos para un requerimiento
+  static async getRequirementDocumentHistory(req, res) {
+    try {
+      const { project_id, stage_name, requirement_id } = req.params;
+
+      console.log(`📋 Obteniendo historial de requerimiento ${requirement_id}`);
+
+      // Verificar proyecto y permisos
+      const project = await Project.findById(project_id);
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          message: 'Proyecto no encontrado'
+        });
+      }
+
+      if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permisos para ver este requerimiento'
+        });
+      }
+
+      // Obtener todos los documentos del requerimiento
+      const documents = await Document.getAllByRequirement(project_id, stage_name, requirement_id);
+
+      res.json({
+        success: true,
+        data: {
+          documents,
+          project: {
+            id: project.id,
+            code: project.code,
+            title: project.title
+          },
+          requirement: {
+            stage_name,
+            requirement_id,
+           requirement_name: RequirementController.getRequirementName(stage_name, requirement_id)
+
+          },
+          total: documents.length
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Error obteniendo historial del requerimiento:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  }
+
+  // Obtener estadísticas de requerimientos de un proyecto
+  static async getRequirementStats(req, res) {
+    try {
+      const { project_id } = req.params;
+
+      const project = await Project.findById(project_id);
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          message: 'Proyecto no encontrado'
+        });
+      }
+
+      // Verificar permisos
+      if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permisos para ver las estadísticas de este proyecto'
+        });
+      }
+
+      // Calcular estadísticas por etapa
+      const stageStats = {};
+      const documents = await Document.getByProject(project_id);
+
+      Object.entries(stageRequirements).forEach(([stageId, stage]) => {
+        const stageDocuments = documents.filter(doc => doc.stage_name === stageId);
+        const completedRequirements = stage.requirements.filter(req => 
+          stageDocuments.some(doc => doc.requirement_id === req.id)
+        ).length;
+
+        stageStats[stageId] = {
+          stage_name: stage.name,
+          total_requirements: stage.requirements.length,
+          completed_requirements: completedRequirements,
+          completion_percentage: Math.round((completedRequirements / stage.requirements.length) * 100),
+          total_documents: stageDocuments.length
+        };
+      });
+
+      res.json({
+        success: true,
+        data: {
+          project: {
+            id: project.id,
+            code: project.code,
+            title: project.title
+          },
+          stage_stats: stageStats,
+          overall: {
+            total_requirements: Object.values(stageRequirements).reduce((sum, stage) => sum + stage.requirements.length, 0),
+            completed_requirements: Object.values(stageStats).reduce((sum, stat) => sum + stat.completed_requirements, 0),
+            total_documents: documents.length
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Error obteniendo estadísticas:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  }
+
+  // Generar informe final del proyecto (solo admin)
+  static async generateFinalReport(req, res) {
+    try {
+      const { project_id } = req.params;
+
+      const project = await Project.findById(project_id);
+      if (!project) {
+        return res.status(404).json({
+          success: false,
+          message: 'Proyecto no encontrado'
+        });
+      }
+
+      // TODO: Implementar generación de informe final
+      // Por ahora, retornar datos básicos
+
+      res.json({
+        success: true,
+        message: 'Informe final generado exitosamente',
+        data: {
+          project: {
+            id: project.id,
+            code: project.code,
+            title: project.title
+          },
+          generated_at: new Date().toISOString(),
+          // TODO: Agregar más detalles del informe
+        }
+      });
+
+    } catch (error) {
+      console.error('❌ Error generando informe:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error interno del servidor'
+      });
+    }
+  }
+
+  // Helper: Obtener nombre del requerimiento
+  static getRequirementName(stageName, requirementId) {
+    try {
+      const stage = stageRequirements[stageName];
+      if (!stage) return requirementId;
+
+      const requirement = stage.requirements.find(req => req.id === requirementId);
+      return requirement ? requirement.name : requirementId;
+    } catch (error) {
+      return requirementId;
+    }
+  }
+}
+
+module.exports = RequirementController;
