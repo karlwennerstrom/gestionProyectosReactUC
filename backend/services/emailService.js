@@ -39,7 +39,83 @@ class EmailService {
       return false;
     }
   }
+// NUEVO: Notificación de documento corregido
+async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projectCode, projectTitle, stageName, requirementName, fileName) {
+  const stageNames = {
+    'formalization': 'Formalización',
+    'design': 'Diseño y Validación',
+    'delivery': 'Entrega y Configuración',
+    'operation': 'Aceptación Operacional',
+    'maintenance': 'Operación y Mantenimiento'
+  };
 
+  // Email al usuario (confirmación de corrección)
+  const userContent = `
+    <h2>📝 Corrección Enviada</h2>
+    <p>Hola <strong>${userName}</strong>,</p>
+    <p>Tu corrección ha sido enviada exitosamente y está siendo revisada.</p>
+    
+    <div style="background-color: #fff7ed; border: 1px solid #fed7aa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <h3 style="color: #ea580c; margin-top: 0;">📋 Documento Corregido</h3>
+      <p><strong>Proyecto:</strong> ${projectCode} - ${projectTitle}</p>
+      <p><strong>Etapa:</strong> ${stageNames[stageName] || stageName}</p>
+      <p><strong>Requerimiento:</strong> ${requirementName}</p>
+      <p><strong>Archivo corregido:</strong> ${fileName}</p>
+      <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-CL')}</p>
+    </div>
+
+    <p>✅ Tu documento corregido ha sido enviado a revisión. Recibirás una notificación cuando se complete la nueva evaluación.</p>
+  `;
+
+  const userMailOptions = {
+    from: `"Sistema UC" <${process.env.SMTP_USER}>`,
+    to: userEmail,
+    subject: `📝 Corrección Enviada: ${requirementName} - ${projectCode}`,
+    html: this.getBaseTemplate(userContent, 'Corrección Enviada')
+  };
+
+  // Email al admin (notificación de corrección)
+  const adminContent = `
+    <h2>📝 Documento Corregido Para Revisión</h2>
+    <p>Hola <strong>${adminName}</strong>,</p>
+    <p>Un usuario ha enviado una corrección que requiere tu revisión.</p>
+    
+    <div style="background-color: #fff7ed; border: 1px solid #fed7aa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <h3 style="color: #ea580c; margin-top: 0;">📋 Corrección Pendiente</h3>
+      <p><strong>Usuario:</strong> ${userName} (${userEmail})</p>
+      <p><strong>Proyecto:</strong> ${projectCode} - ${projectTitle}</p>
+      <p><strong>Etapa:</strong> ${stageNames[stageName] || stageName}</p>
+      <p><strong>Requerimiento:</strong> ${requirementName}</p>
+      <p><strong>Archivo corregido:</strong> ${fileName}</p>
+      <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-CL')}</p>
+    </div>
+
+    <p>🔄 <strong>Acción requerida:</strong> El usuario ha corregido el documento previamente rechazado. Por favor revisa la nueva versión.</p>
+
+    <p style="text-align: center;">
+      <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/admin" class="button">
+        Revisar Corrección
+      </a>
+    </p>
+  `;
+
+  const adminMailOptions = {
+    from: `"Sistema UC" <${process.env.SMTP_USER}>`,
+    to: adminEmail,
+    subject: `📝 Corrección Para Revisar: ${requirementName} - ${projectCode}`,
+    html: this.getBaseTemplate(adminContent, 'Corrección Para Revisar')
+  };
+
+  // Enviar ambos emails
+  try {
+    await this.sendEmail(userMailOptions);
+    await this.sendEmail(adminMailOptions);
+    return { success: true };
+  } catch (error) {
+    console.error('Error enviando notificaciones de corrección:', error);
+    return { success: false, error: error.message };
+  }
+}
   // Template base para emails
   getBaseTemplate(content, title = 'Sistema UC') {
     return `

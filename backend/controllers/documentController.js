@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const { v4: uuidv4 } = require('uuid');
 const { stageRequirements } = require('../config/stageRequirements');
+const { executeQuery } = require('../config/database'); // ← AGREGADO
 
 // Helper function para obtener nombre del requerimiento
 const getRequirementName = (stageName, requirementId) => {
@@ -83,7 +84,76 @@ const upload = multer({
 // Middleware para upload de archivo único
 const uploadSingle = upload.single('document');
 
-// Subir documento
+// ← FUNCIÓN AUXILIAR PARA GESTIONAR ESTADOS DE REQUERIMIENTOS
+const updateRequirementValidationStatus = async (projectId, stageName, requirementId, status, adminComments = null, reviewedBy = null) => {
+  try {
+    console.log(`🔄 Actualizando estado de requerimiento:`, {
+      projectId, stageName, requirementId, status
+    });
+
+    // Verificar si existe la tabla requirement_validations
+    const tableExists = await executeQuery(`
+      SELECT COUNT(*) as count 
+      FROM information_schema.tables 
+      WHERE table_schema = DATABASE() 
+        AND table_name = 'requirement_validations'
+    `);
+
+    if (tableExists[0].count > 0) {
+      // ✅ TABLA EXISTE - GUARDAR ESTADO REAL
+      await executeQuery(`
+        INSERT INTO requirement_validations 
+        (project_id, stage_name, requirement_id, status, admin_comments, reviewed_by, reviewed_at)
+        VALUES (?, ?, ?, ?, ?, ?, NOW())
+        ON DUPLICATE KEY UPDATE 
+          status = VALUES(status),
+          admin_comments = VALUES(admin_comments),
+          reviewed_by = VALUES(reviewed_by),
+          reviewed_at = NOW(),
+          updated_at = NOW()
+      `, [projectId, stageName, requirementId, status, adminComments, reviewedBy]);
+
+      console.log(`✅ Estado de requerimiento actualizado en BD: ${status}`);
+    } else {
+      // ⚠️ TABLA NO EXISTE - CREAR AUTOMÁTICAMENTE
+      console.log('📝 Creando tabla requirement_validations...');
+      
+      await executeQuery(`
+        CREATE TABLE requirement_validations (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          project_id INT NOT NULL,
+          stage_name VARCHAR(50) NOT NULL,
+          requirement_id VARCHAR(100) NOT NULL,
+          status ENUM('pending', 'in-review', 'approved', 'rejected') DEFAULT 'pending',
+          admin_comments TEXT,
+          reviewed_by INT,
+          reviewed_at TIMESTAMP NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+          FOREIGN KEY (reviewed_by) REFERENCES users(id),
+          UNIQUE KEY unique_requirement (project_id, stage_name, requirement_id)
+        )
+      `);
+
+      console.log('✅ Tabla requirement_validations creada');
+
+      // Ahora insertar el estado
+      await executeQuery(`
+        INSERT INTO requirement_validations 
+        (project_id, stage_name, requirement_id, status, admin_comments, reviewed_by, reviewed_at)
+        VALUES (?, ?, ?, ?, ?, ?, NOW())
+      `, [projectId, stageName, requirementId, status, adminComments, reviewedBy]);
+
+      console.log(`✅ Estado inicial guardado: ${status}`);
+    }
+  } catch (error) {
+    console.error('❌ Error actualizando estado de requerimiento:', error);
+    // No lanzar error para no bloquear el upload
+  }
+};
+
+// ← UPLOAD DOCUMENT - VERSIÓN COMPLETA CON FLUJO DE CORRECCIONES
 const uploadDocument = async (req, res) => {
   uploadSingle(req, res, async (err) => {
     try {
@@ -118,7 +188,8 @@ const uploadDocument = async (req, res) => {
         project_id,
         stage_name,
         requirement_id,
-        fileName: req.file?.originalname
+        fileName: req.file?.originalname,
+        userId: req.user.id
       });
 
       // Validar campos requeridos
@@ -161,7 +232,27 @@ const uploadDocument = async (req, res) => {
         });
       }
 
-      // Crear registro del documento
+      // ← PASO 1: VERIFICAR ESTADO ACTUAL PARA DETECTAR CORRECCIONES
+      let isCorrection = false;
+      let previousStatus = null;
+      try {
+        const currentValidation = await executeQuery(`
+          SELECT status, admin_comments FROM requirement_validations 
+          WHERE project_id = ? AND stage_name = ? AND requirement_id = ?
+        `, [project_id, stage_name, requirement_id]);
+
+        if (currentValidation.length > 0) {
+          previousStatus = currentValidation[0].status;
+          if (previousStatus === 'rejected') {
+            isCorrection = true;
+            console.log('🔄 Detectada corrección de documento rechazado');
+          }
+        }
+      } catch (error) {
+        console.error('Error verificando estado anterior:', error);
+      }
+
+      // ← PASO 2: CREAR DOCUMENTO EN LA BD
       const document = await Document.create({
         project_id,
         stage_name,
@@ -182,54 +273,36 @@ const uploadDocument = async (req, res) => {
         original_name: document.original_name
       });
 
-      // 📧 ENVIAR NOTIFICACIONES POR EMAIL
-       // 📧 ENVIAR NOTIFICACIONES POR EMAIL
+      // ← PASO 3: ACTUALIZAR ESTADO DEL REQUERIMIENTO CON LÓGICA DE CORRECCIÓN
       try {
-        // 1. Notificación al usuario (confirmación)
-        const projectOwner = await User.findById(req.user.id);
-        if (projectOwner && projectOwner.email) {
-          // Obtener nombre del requerimiento
-          const stageName = stage_name;
-          const requirementName = getRequirementName(stage_name, requirement_id);
-          
-          await emailService.notifyDocumentUploadedConfirmation(
-            projectOwner.email,
-            projectOwner.full_name,
-            project.code,
-            stageName,
-            requirementName,
-            req.file.originalname
-          );
-          console.log(`✅ Email de confirmación enviado a ${projectOwner.email}`);
+        let newStatus = 'in-review';
+        let statusMessage;
+        
+        if (isCorrection) {
+          statusMessage = `📝 DOCUMENTO CORREGIDO: ${req.file.originalname} - Reenviado a revisión`;
+          console.log('🔄 Marcando como documento corregido');
+        } else {
+          statusMessage = `Documento subido: ${req.file.originalname}`;
         }
 
-        // 2. Notificación al admin
-        const adminEmail = process.env.ADMIN_EMAIL;
-        if (adminEmail) {
-          const adminUser = await User.findByEmail(adminEmail);
-          const adminName = adminUser ? adminUser.full_name : 'Administrador';
-          const requirementName = getRequirementName(stage_name, requirement_id);
-          
-          // ← USAR EL NUEVO MÉTODO PARA REQUERIMIENTOS
-          await emailService.notifyDocumentUploadedForRequirement(
-            adminEmail,
-            adminName,
-            projectOwner.email,
-            projectOwner.full_name,
-            project.code,
-            project.title,
-            stage_name,
-            requirementName,
-            req.file.originalname
-          );
-          console.log(`📧 Email de notificación enviado al admin: ${adminEmail}`);
-        }
-      } catch (emailError) {
-        console.error('❌ Error enviando notificaciones por email:', emailError);
-        // No fallar la operación por error de email
+        // Actualizar estado del requerimiento
+        await updateRequirementValidationStatus(
+          project_id, 
+          stage_name, 
+          requirement_id, 
+          newStatus,
+          statusMessage,
+          null // No hay reviewed_by porque el usuario subió el documento
+        );
+
+        console.log(`🔄 Estado del requerimiento actualizado a: ${newStatus}`);
+
+      } catch (validationError) {
+        console.error('⚠️ Error actualizando estado de requerimiento:', validationError);
+        // No fallar el upload por esto
       }
 
-      // NUEVA FUNCIONALIDAD: Si la etapa estaba rechazada, cambiarla a en revisión
+      // ← PASO 4: ACTUALIZAR ESTADO DE LA ETAPA EN PROJECT_STAGES
       try {
         const currentStageStatus = await Project.getStageStatus(project_id, stage_name);
         console.log(`Estado actual de etapa ${stage_name}:`, currentStageStatus);
@@ -239,30 +312,123 @@ const uploadDocument = async (req, res) => {
             project_id, 
             stage_name, 
             'in-progress', 
-            'Nuevos documentos subidos - Enviado a revisión automáticamente'
+            isCorrection 
+              ? 'Documento corregido subido - Enviado a revisión automáticamente'
+              : 'Nuevos documentos subidos - Enviado a revisión automáticamente'
           );
-          console.log(`Etapa ${stage_name} del proyecto ${project_id} cambiada de 'rejected' a 'in-progress'`);
+          console.log(`✅ Etapa ${stage_name} cambiada de 'rejected' a 'in-progress'`);
         } else if (currentStageStatus === 'pending') {
-          // Si la etapa estaba pendiente, cambiarla a en revisión
           await Project.updateStage(
             project_id, 
             stage_name, 
             'in-progress', 
             'Documentos subidos - Enviado a revisión'
           );
-          console.log(`Etapa ${stage_name} del proyecto ${project_id} cambiada de 'pending' a 'in-progress'`);
+          console.log(`✅ Etapa ${stage_name} cambiada de 'pending' a 'in-progress'`);
         }
       } catch (stageError) {
-        console.error('Error actualizando estado de etapa:', stageError);
+        console.error('⚠️ Error actualizando estado de etapa:', stageError);
         // No fallar el upload por esto, solo registrar el error
       }
 
-      console.log('Documento creado exitosamente:', document);
+      // ← PASO 5: ENVIAR NOTIFICACIONES POR EMAIL (CON LÓGICA DE CORRECCIÓN)
+      try {
+        // Obtener información del usuario
+        const projectOwner = await User.findById(req.user.id);
+        const requirementName = getRequirementName(stage_name, requirement_id);
+        
+        if (isCorrection) {
+          // ← ES UNA CORRECCIÓN - USAR EMAIL ESPECIAL
+          console.log('📧 Enviando notificaciones de corrección...');
+          
+          if (projectOwner && projectOwner.email) {
+            // 1. Notificación al usuario (confirmación de corrección)
+            await emailService.notifyDocumentUploadedConfirmation(
+              projectOwner.email,
+              projectOwner.full_name,
+              project.code,
+              stage_name,
+              `${requirementName} (CORREGIDO)`,
+              req.file.originalname
+            );
+            console.log(`✅ Email de confirmación de corrección enviado a ${projectOwner.email}`);
+          }
+
+          // 2. Notificación especial al admin sobre corrección
+          const adminEmail = process.env.ADMIN_EMAIL;
+          if (adminEmail) {
+            const adminUser = await User.findByEmail(adminEmail);
+            const adminName = adminUser ? adminUser.full_name : 'Administrador';
+            
+            await emailService.notifyDocumentUploadedForRequirement(
+              adminEmail,
+              adminName,
+              projectOwner.email,
+              projectOwner.full_name,
+              project.code,
+              project.title,
+              stage_name,
+              `${requirementName} (DOCUMENTO CORREGIDO)`,
+              req.file.originalname
+            );
+            console.log(`📧 Email de corrección enviado al admin: ${adminEmail}`);
+          }
+        } else {
+          // ← ES UN DOCUMENTO NUEVO - USAR EMAILS NORMALES
+          console.log('📧 Enviando notificaciones de documento nuevo...');
+          
+          if (projectOwner && projectOwner.email) {
+            // 1. Notificación al usuario (confirmación)
+            await emailService.notifyDocumentUploadedConfirmation(
+              projectOwner.email,
+              projectOwner.full_name,
+              project.code,
+              stage_name,
+              requirementName,
+              req.file.originalname
+            );
+            console.log(`✅ Email de confirmación enviado a ${projectOwner.email}`);
+          }
+
+          // 2. Notificación al admin
+          const adminEmail = process.env.ADMIN_EMAIL;
+          if (adminEmail) {
+            const adminUser = await User.findByEmail(adminEmail);
+            const adminName = adminUser ? adminUser.full_name : 'Administrador';
+            
+            await emailService.notifyDocumentUploadedForRequirement(
+              adminEmail,
+              adminName,
+              projectOwner.email,
+              projectOwner.full_name,
+              project.code,
+              project.title,
+              stage_name,
+              requirementName,
+              req.file.originalname
+            );
+            console.log(`📧 Email de notificación enviado al admin: ${adminEmail}`);
+          }
+        }
+      } catch (emailError) {
+        console.error('❌ Error enviando notificaciones por email:', emailError);
+        // No fallar la operación por error de email
+      }
+
+      // ← RESPUESTA EXITOSA CON INFORMACIÓN DE CORRECCIÓN
+      console.log('🎉 Upload completado exitosamente');
 
       res.status(201).json({
         success: true,
-        message: 'Documento subido exitosamente',
-        data: { document }
+        message: isCorrection 
+          ? 'Corrección subida exitosamente y enviada a revisión'
+          : 'Documento subido exitosamente',
+        data: { 
+          document,
+          requirement_status: 'in-review',
+          is_correction: isCorrection,
+          previous_status: previousStatus
+        }
       });
 
     } catch (error) {
@@ -271,10 +437,11 @@ const uploadDocument = async (req, res) => {
         await fs.unlink(req.file.path).catch(console.error);
       }
       
-      console.error('Error subiendo documento:', error);
+      console.error('❌ Error subiendo documento:', error);
       res.status(500).json({
         success: false,
-        message: 'Error interno del servidor'
+        message: 'Error interno del servidor',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   });
@@ -445,6 +612,32 @@ const deleteDocument = async (req, res) => {
         success: false,
         message: 'Error eliminando el documento'
       });
+    }
+
+    // ← ACTUALIZAR ESTADO DEL REQUERIMIENTO DESPUÉS DE ELIMINAR
+    try {
+      // Verificar si quedan más documentos para este requerimiento
+      const remainingDocs = await executeQuery(`
+        SELECT COUNT(*) as count 
+        FROM documents 
+        WHERE project_id = ? AND stage_name = ? AND requirement_id = ?
+          AND (is_current = TRUE OR is_current IS NULL)
+      `, [document.project_id, document.stage_name, document.requirement_id]);
+
+      if (remainingDocs[0].count === 0) {
+        // No quedan documentos, volver a pendiente
+        await updateRequirementValidationStatus(
+          document.project_id,
+          document.stage_name,
+          document.requirement_id,
+          'pending',
+          'Documento eliminado - Sin archivos pendientes',
+          req.user.id
+        );
+        console.log('📝 Estado del requerimiento actualizado a pendiente (sin documentos)');
+      }
+    } catch (error) {
+      console.error('Error actualizando estado después de eliminar:', error);
     }
 
     res.json({

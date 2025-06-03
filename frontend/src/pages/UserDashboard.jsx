@@ -1,10 +1,10 @@
-// frontend/src/pages/UserDashboard.jsx
+// frontend/src/pages/UserDashboard.jsx - CON LIGHTBOX Y ESTADOS
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { projectService, documentService, fileUtils } from '../services/api';
+import { projectService, documentService, fileUtils, api } from '../services/api';
 import { dateUtils } from '../services/api';
 import { InlineSpinner } from '../components/Common/LoadingSpinner';
-import RequirementCard from '../components/Common/RequirementCard'; // ← NUEVO IMPORT
+import RequirementCard from '../components/Common/RequirementCard';
 import UserProjectDetailsView from '../components/User/UserProjectDetailsView';
 import RequirementUploadModal from '../components/User/RequirementUploadModal';
 import NotificationSettings from '../components/User/NotificationSettings';
@@ -24,10 +24,13 @@ const UserDashboard = () => {
   const [selectedStage, setSelectedStage] = useState('formalization');
   const [selectedRequirement, setSelectedRequirement] = useState(null);
 
-  // ← NUEVOS ESTADOS PARA REQUIREMENT CARDS
+  // ← NUEVOS ESTADOS PARA REQUIREMENT CARDS CON ESTADOS REALES
   const [projectRequirements, setProjectRequirements] = useState({});
-  const [showRequirementDetails, setShowRequirementDetails] = useState(false);
-  const [selectedRequirementForView, setSelectedRequirementForView] = useState(null);
+  
+  // ← NUEVOS ESTADOS PARA LIGHTBOX DE DOCUMENTOS
+  const [showDocumentModal, setShowDocumentModal] = useState(false);
+  const [selectedDocument, setSelectedDocument] = useState(null);
+  const [loadingDocument, setLoadingDocument] = useState(false);
 
   const [newProject, setNewProject] = useState({
     title: '',
@@ -46,76 +49,80 @@ const UserDashboard = () => {
       const response = await projectService.getMy();
       console.log('Proyectos recibidos:', response.data.data.projects);
       
-      // Para cada proyecto, obtener también sus documentos para mostrar el estado
+      // ← CARGAR PROYECTOS CON ESTADOS REALES DE REQUERIMIENTOS
       const projectsWithRequirementData = await Promise.all(
         response.data.data.projects.map(async (project) => {
           try {
-            console.log(`Cargando documentos para proyecto ${project.id}...`);
+            console.log(`Cargando datos para proyecto ${project.id}...`);
+            
+            // 1. Cargar documentos del proyecto
             const docsResponse = await documentService.getByProject(project.id);
             const documents = docsResponse.data.data.documents;
             console.log(`Documentos para proyecto ${project.id}:`, documents);
             
-            // ← NUEVO: Cargar requerimientos del proyecto
-            const requirementsData = {};
+            // 2. ← CARGAR ESTADOS REALES DE REQUERIMIENTOS
+            let requirementsData = [];
             try {
-              const reqResponse = await fetch(`/api/requirements/project/${project.id}`, {
-                headers: {
-                  'Authorization': `Bearer ${localStorage.getItem('token')}`
-                }
-              });
-              if (reqResponse.ok) {
-                const reqData = await reqResponse.json();
-                requirementsData[project.id] = reqData.data.requirements;
+              console.log(`📋 Cargando estados de requerimientos para proyecto ${project.id}`);
+              const reqResponse = await api.get(`/requirements/project/${project.id}`);
+              
+              if (reqResponse.data.success) {
+                requirementsData = reqResponse.data.data.requirements;
+                console.log(`✅ Estados de requerimientos cargados:`, requirementsData.length);
+                
+                // Guardar en el estado para uso posterior
+                setProjectRequirements(prev => ({
+                  ...prev,
+                  [project.id]: requirementsData
+                }));
               }
             } catch (reqError) {
-              console.warn('No se pudieron cargar requerimientos:', reqError);
+              console.warn('Error cargando estados de requerimientos:', reqError);
             }
             
-            // Analizar completitud de requerimientos por etapa
+            // 3. Analizar completitud USANDO LOS ESTADOS REALES
             const requirementStats = {};
             
             Object.keys(stageRequirements).forEach(stageId => {
               const stage = stageRequirements[stageId];
               
-              // CORREGIDO: Contar requerimientos completados de forma más precisa
-              const completedRequirements = stage.requirements.filter(req => {
-                const hasDoc = documents.some(doc => 
-                  doc.stage_name === stageId && 
-                  doc.requirement_id === req.id &&
-                  doc.requirement_id !== null &&
-                  doc.requirement_id !== undefined &&
-                  doc.requirement_id !== ''
-                );
-                console.log(`📋 Requerimiento ${req.id} en etapa ${stageId}: ${hasDoc ? 'COMPLETADO' : 'PENDIENTE'}`);
-                return hasDoc;
-              }).length;
+              // Contar requerimientos por estado usando la API real
+              const stageRequirementsFromAPI = requirementsData.filter(req => req.stage_name === stageId);
+              
+              const completedRequirements = stageRequirementsFromAPI.filter(req => req.status === 'approved').length;
+              const inReviewRequirements = stageRequirementsFromAPI.filter(req => req.status === 'in-review').length;
+              const rejectedRequirements = stageRequirementsFromAPI.filter(req => req.status === 'rejected').length;
               
               requirementStats[stageId] = {
                 completed: completedRequirements,
+                inReview: inReviewRequirements,
+                rejected: rejectedRequirements,
                 total: stage.requirements.length,
                 percentage: Math.round((completedRequirements / stage.requirements.length) * 100)
               };
               
-              console.log(`Estadísticas para etapa ${stageId}:`, requirementStats[stageId]);
+              console.log(`✅ Estadísticas REALES para etapa ${stageId}:`, requirementStats[stageId]);
             });
             
             return {
               ...project,
               documents,
-              requirementStats
+              requirementStats,
+              requirementsData // ← Incluir los datos reales
             };
           } catch (error) {
-            console.error(`Error cargando documentos para proyecto ${project.id}:`, error);
+            console.error(`Error cargando datos para proyecto ${project.id}:`, error);
             return {
               ...project,
               documents: [],
-              requirementStats: {}
+              requirementStats: {},
+              requirementsData: []
             };
           }
         })
       );
       
-      console.log('Proyectos con datos de requerimientos:', projectsWithRequirementData);
+      console.log('Proyectos con datos REALES de requerimientos:', projectsWithRequirementData);
       setProjects(projectsWithRequirementData);
     } catch (error) {
       console.error('Error cargando proyectos:', error);
@@ -125,30 +132,55 @@ const UserDashboard = () => {
     }
   };
 
-  // ← NUEVAS FUNCIONES PARA REQUIREMENT CARDS
-  const loadProjectRequirements = async (projectId) => {
+  // ← NUEVA FUNCIÓN PARA VER DOCUMENTO CON LIGHTBOX
+  const handleViewDocument = async (requirement) => {
     try {
-      const response = await fetch(`/api/requirements/project/${projectId}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
+      setLoadingDocument(true);
+      setShowDocumentModal(true);
       
-      if (response.ok) {
-        const data = await response.json();
-        setProjectRequirements(prev => ({
-          ...prev,
-          [projectId]: data.data.requirements
-        }));
+      console.log('📄 Viendo documento del requerimiento:', requirement);
+
+      // Si el requirement ya tiene la información del documento, usarla
+      if (requirement.current_document_id) {
+        try {
+          const docResponse = await documentService.getById(requirement.current_document_id);
+          if (docResponse.data.success) {
+            setSelectedDocument({
+              ...docResponse.data.data.document,
+              requirement_info: {
+                requirement_name: requirement.requirement_name,
+                stage_name: requirement.stage_name,
+                project_id: requirement.project_id,
+                status: requirement.status
+              }
+            });
+          }
+        } catch (docError) {
+          console.error('Error cargando detalles del documento:', docError);
+          // Fallback: usar la información que ya tenemos
+          setSelectedDocument({
+            id: requirement.current_document_id,
+            original_name: requirement.current_document_name,
+            uploaded_at: requirement.current_document_date,
+            requirement_info: {
+              requirement_name: requirement.requirement_name,
+              stage_name: requirement.stage_name,
+              project_id: requirement.project_id,
+              status: requirement.status
+            }
+          });
+        }
+      } else {
+        toast.error('No hay documento disponible para mostrar');
+        setShowDocumentModal(false);
       }
     } catch (error) {
-      console.error('Error cargando requerimientos:', error);
+      console.error('Error mostrando documento:', error);
+      toast.error('Error al cargar el documento');
+      setShowDocumentModal(false);
+    } finally {
+      setLoadingDocument(false);
     }
-  };
-
-  const handleViewDocuments = (requirement) => {
-    setSelectedRequirementForView(requirement);
-    setShowRequirementDetails(true);
   };
 
   const handleRequirementClick = (requirement) => {
@@ -185,11 +217,21 @@ const UserDashboard = () => {
 
   const handleRequirementUploadSuccess = async () => {
     try {
-      // Recargar solo los datos necesarios sin recargar toda la página
       console.log('Actualizando datos después de subir documento...');
-      await loadProjects();
+      await loadProjects(); // Esto recargará los estados reales
+      toast.success('Datos actualizados correctamente');
     } catch (error) {
       console.error('Error actualizando datos:', error);
+    }
+  };
+
+  // ← FUNCIÓN PARA DESCARGAR DOCUMENTO
+  const downloadDocument = async (documentId, fileName) => {
+    try {
+      await fileUtils.downloadFile(documentId, fileName);
+      toast.success('Archivo descargado');
+    } catch (error) {
+      toast.error('Error al descargar archivo');
     }
   };
 
@@ -205,10 +247,6 @@ const UserDashboard = () => {
     
     const stage = project.stages.find(s => s.stage_name === stageId);
     return stage ? stage.admin_comments : null;
-  };
-
-  const getStageDocuments = (project, stageName) => {
-    return project.documents ? project.documents.filter(doc => doc.stage_name === stageName) : [];
   };
 
   const getStageStatusColor = (status, completionPercentage) => {
@@ -380,11 +418,11 @@ const UserDashboard = () => {
                     </div>
                   </div>
 
-                  {/* ← SECCIÓN COMPLETAMENTE NUEVA: REQUERIMIENTOS CON REQUIREMENT CARDS */}
+                  {/* ← SECCIÓN DE REQUERIMIENTOS CON ESTADOS REALES */}
                   <div className="border-t pt-4 mt-4">
                     <h4 className="text-sm font-medium text-gray-900 mb-4">Requerimientos por Etapa</h4>
                     
-                    {/* Grid de etapas con RequirementCards */}
+                    {/* Grid de etapas con RequirementCards REALES */}
                     <div className="space-y-6">
                       {Object.entries(stageRequirements).map(([stageId, stage]) => {
                         const stageStatus = getStageStatus(project, stageId);
@@ -393,6 +431,9 @@ const UserDashboard = () => {
                         const isRejected = stageStatus === 'rejected';
                         const isApproved = stageStatus === 'completed';
                         const isInReview = stageStatus === 'in-progress';
+                        
+                        // ← OBTENER REQUERIMIENTOS REALES DE LA API
+                        const realRequirements = projectRequirements[project.id] || project.requirementsData || [];
                         
                         return (
                           <div key={stageId} className={`border-2 rounded-lg p-4 transition-all ${
@@ -408,7 +449,7 @@ const UserDashboard = () => {
                               <div className="flex items-center gap-2">
                                 <span className="text-lg">{getStageStatusIcon(stageStatus, requirementStat.percentage)}</span>
                                 <span className="text-xs font-medium text-gray-600">
-                                  {requirementStat.completed}/{requirementStat.total} completados
+                                  {requirementStat.completed}/{requirementStat.total} aprobados
                                 </span>
                               </div>
                             </div>
@@ -449,36 +490,27 @@ const UserDashboard = () => {
                               </div>
                             )}
 
-                            {/* ← AQUÍ ESTÁN LOS REQUIREMENT CARDS */}
+                            {/* ← REQUIREMENT CARDS CON ESTADOS REALES */}
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                               {stage.requirements.map((requirement) => {
-                                // Crear objeto requirement compatible con RequirementCard
-                                const hasDocument = project.documents?.some(
-                                  doc => doc.stage_name === stageId && 
-                                         doc.requirement_id === requirement.id &&
-                                         doc.requirement_id !== null &&
-                                         doc.requirement_id !== undefined &&
-                                         doc.requirement_id !== ''
-                                );
-                                
-                                const currentDoc = project.documents?.find(
-                                  doc => doc.stage_name === stageId && 
-                                         doc.requirement_id === requirement.id
+                                // ← BUSCAR EL REQUERIMIENTO REAL EN LOS DATOS DE LA API
+                                const realRequirement = realRequirements.find(
+                                  req => req.stage_name === stageId && req.requirement_id === requirement.id
                                 );
 
-                                const requirementForCard = {
+                                // ← CREAR OBJETO CON DATOS REALES O DEFAULTS
+                                const requirementForCard = realRequirement || {
                                   project_id: project.id,
                                   stage_name: stageId,
                                   requirement_id: requirement.id,
                                   requirement_name: requirement.name,
-                                  status: hasDocument ? 'in-review' : 'pending', // Por ahora, hasta conectar con la nueva API
-                                  has_current_document: hasDocument,
-                                  current_document_name: currentDoc?.original_name,
-                                  current_document_date: currentDoc?.uploaded_at,
-                                  total_documents: project.documents?.filter(
-                                    doc => doc.stage_name === stageId && doc.requirement_id === requirement.id
-                                  ).length || 0,
-                                  admin_comments: null, // Se cargará con la nueva API
+                                  status: 'pending', // ← Estado por defecto
+                                  has_current_document: false,
+                                  current_document_name: null,
+                                  current_document_date: null,
+                                  current_document_id: null,
+                                  total_documents: 0,
+                                  admin_comments: null,
                                   reviewed_at: null,
                                   required: requirement.required
                                 };
@@ -490,7 +522,7 @@ const UserDashboard = () => {
                                     isAdmin={false}
                                     projectId={project.id}
                                     stageName={stageId}
-                                    onViewDocuments={handleViewDocuments}
+                                    onViewDocuments={handleViewDocument} // ← NUEVA FUNCIÓN
                                     onUploadDocument={handleRequirementClick}
                                   />
                                 );
@@ -540,7 +572,7 @@ const UserDashboard = () => {
         </div>
       </div>
 
-      {/* MODALES - SIN CAMBIOS */}
+      {/* MODALES EXISTENTES - SIN CAMBIOS */}
       {/* Modal Crear Proyecto */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -620,6 +652,152 @@ const UserDashboard = () => {
         <NotificationSettings
           onClose={() => setShowNotificationSettings(false)}
         />
+      )}
+
+      {/* ← NUEVO: MODAL LIGHTBOX PARA VER DOCUMENTO */}
+      {showDocumentModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden">
+            {/* Header */}
+            <div className="bg-blue-600 text-white p-6">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="text-lg font-medium mb-2">📄 Ver Documento</h3>
+                  {selectedDocument?.requirement_info && (
+                    <div className="text-blue-100 text-sm">
+                      <p><strong>Requerimiento:</strong> {selectedDocument.requirement_info.requirement_name}</p>
+                      <p><strong>Estado:</strong> 
+                        <span className={`ml-1 px-2 py-1 rounded text-xs font-medium ${
+                          selectedDocument.requirement_info.status === 'approved' ? 'bg-green-500 text-white' :
+                          selectedDocument.requirement_info.status === 'rejected' ? 'bg-red-500 text-white' :
+                          selectedDocument.requirement_info.status === 'in-review' ? 'bg-yellow-500 text-black' :
+                          'bg-gray-500 text-white'
+                        }`}>
+                          {selectedDocument.requirement_info.status === 'approved' ? '✅ Aprobado' :
+                           selectedDocument.requirement_info.status === 'rejected' ? '❌ Rechazado' :
+                           selectedDocument.requirement_info.status === 'in-review' ? '🔄 En Revisión' :
+                           '⏳ Pendiente'}
+                        </span>
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowDocumentModal(false)}
+                  className="text-white hover:text-gray-200 text-2xl font-bold"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-6">
+              {loadingDocument ? (
+                <div className="flex justify-center py-8">
+                  <InlineSpinner text="Cargando documento..." />
+                </div>
+              ) : selectedDocument ? (
+                <div className="space-y-4">
+                  {/* Información del documento */}
+                  <div className="bg-gray-50 rounded-lg p-4">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-3xl">
+                        {fileUtils.getFileTypeIcon(selectedDocument.mime_type)}
+                      </span>
+                      <div className="flex-1">
+                        <h4 className="text-lg font-medium text-gray-900">
+                          {selectedDocument.original_name}
+                        </h4>
+                        <div className="text-sm text-gray-500 space-y-1">
+                          {selectedDocument.uploaded_by_name && (
+                            <p>Subido por: {selectedDocument.uploaded_by_name}</p>
+                          )}
+                          <p>Fecha: {dateUtils.formatDateTime(selectedDocument.uploaded_at)}</p>
+                          {selectedDocument.file_size && (
+                            <p>Tamaño: {fileUtils.formatFileSize(selectedDocument.file_size)}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Estado del requerimiento */}
+                  {selectedDocument.requirement_info?.status && (
+                    <div className={`p-4 rounded-lg border-2 ${
+                      selectedDocument.requirement_info.status === 'approved' ? 'bg-green-50 border-green-200' :
+                      selectedDocument.requirement_info.status === 'rejected' ? 'bg-red-50 border-red-200' :
+                      selectedDocument.requirement_info.status === 'in-review' ? 'bg-blue-50 border-blue-200' :
+                      'bg-yellow-50 border-yellow-200'
+                    }`}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-lg">
+                          {selectedDocument.requirement_info.status === 'approved' ? '✅' :
+                           selectedDocument.requirement_info.status === 'rejected' ? '❌' :
+                           selectedDocument.requirement_info.status === 'in-review' ? '🔄' :
+                           '⏳'}
+                        </span>
+                        <h5 className={`font-medium ${
+                          selectedDocument.requirement_info.status === 'approved' ? 'text-green-800' :
+                          selectedDocument.requirement_info.status === 'rejected' ? 'text-red-800' :
+                          selectedDocument.requirement_info.status === 'in-review' ? 'text-blue-800' :
+                          'text-yellow-800'
+                        }`}>
+                          {selectedDocument.requirement_info.status === 'approved' ? 'Requerimiento Aprobado' :
+                           selectedDocument.requirement_info.status === 'rejected' ? 'Requerimiento Rechazado' :
+                           selectedDocument.requirement_info.status === 'in-review' ? 'En Revisión por el Administrador' :
+                           'Pendiente de Revisión'}
+                        </h5>
+                      </div>
+                      
+                      <p className={`text-sm ${
+                        selectedDocument.requirement_info.status === 'approved' ? 'text-green-700' :
+                        selectedDocument.requirement_info.status === 'rejected' ? 'text-red-700' :
+                        selectedDocument.requirement_info.status === 'in-review' ? 'text-blue-700' :
+                        'text-yellow-700'
+                      }`}>
+                        {selectedDocument.requirement_info.status === 'approved' ? 
+                          '¡Excelente! Tu documento cumple con todos los requisitos.' :
+                         selectedDocument.requirement_info.status === 'rejected' ? 
+                          'Tu documento requiere correcciones. Revisa los comentarios del administrador y sube una nueva versión.' :
+                         selectedDocument.requirement_info.status === 'in-review' ? 
+                          'El administrador está revisando tu documento. Recibirás una notificación cuando se complete la revisión.' :
+                          'Tu documento está en la cola de revisión.'}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Botón de descarga */}
+                  <div className="text-center">
+                    <button
+                      onClick={() => downloadDocument(selectedDocument.id, selectedDocument.original_name)}
+                      className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-md transition-colors"
+                    >
+                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Descargar Documento
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-gray-500">No se pudo cargar la información del documento</p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-gray-200 p-4 bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setShowDocumentModal(false)}
+                className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
