@@ -8,6 +8,8 @@ import RequirementCard from '../components/Common/RequirementCard';
 import ProjectDetailsView from '../components/Admin/ProjectDetailsView';
 import NotificationSettings from '../components/Admin/NotificationSettings';
 import { stageRequirements } from '../config/stageRequirements';
+import AIChatbot from '../components/Common/AIChatbot';
+
 import toast from 'react-hot-toast';
 
 const AdminDashboard = () => {
@@ -29,6 +31,8 @@ const AdminDashboard = () => {
   const [selectedRequirementDocs, setSelectedRequirementDocs] = useState([]);
   const [selectedRequirementInfo, setSelectedRequirementInfo] = useState(null);
   const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [showChatbot, setShowChatbot] = useState(false);
+
 
   useEffect(() => {
     loadData();
@@ -333,7 +337,20 @@ const AdminDashboard = () => {
                 </svg>
                 Notificaciones
               </button>
-
+            <button
+  onClick={() => setShowChatbot(!showChatbot)}
+  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${
+    showChatbot 
+      ? 'bg-green-600 hover:bg-green-700 text-white' 
+      : 'bg-purple-600 hover:bg-purple-700 text-white'
+  }`}
+  title="Asistente IA"
+>
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-4l-4 4-4-4z" />
+  </svg>
+  {showChatbot ? 'Cerrar Chat' : 'Asistente IA'}
+</button>
               <div className="text-right">
                 <p className="text-sm font-medium text-gray-900">{user?.full_name}</p>
                 <p className="text-xs text-gray-500">{user?.role === 'admin' ? 'Administrador' : 'Usuario'}</p>
@@ -746,7 +763,12 @@ const AdminDashboard = () => {
           </div>
         </div>
       )}
+<AIChatbot 
+      isMinimized={!showChatbot}
+      onToggle={setShowChatbot}
+    />
     </div>
+    
   );
 };
 

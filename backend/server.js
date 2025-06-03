@@ -14,6 +14,8 @@ const projectRoutes = require('./routes/projects');
 const documentRoutes = require('./routes/documents');
 const emailRoutes = require('./routes/email'); 
 const requirementRoutes = require('./routes/requirements'); 
+const aiRoutes = require('./routes/ai');
+
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -40,20 +42,28 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/requirements', requirementRoutes); 
-
-// Ruta de salud del servidor
-app.get('/api/health', (req, res) => {
+app.use('/api/ai', aiRoutes);
+app.get('/api/health', async (req, res) => {
+  const ollamaService = require('./services/ollamaService');
+  const ollamaStatus = await ollamaService.verifyConnection();
+  
   res.json({
     status: 'OK',
     message: 'Sistema UC Backend funcionando correctamente',
     timestamp: new Date().toISOString(),
     version: '2.0.0',
+    services: {
+      database: 'OK',
+      ollama: ollamaStatus.connected ? 'OK' : 'ERROR',
+      ollama_details: ollamaStatus
+    },
     endpoints: {
       auth: '/api/auth',
-      projects: '/api/projects', 
+      projects: '/api/projects',
       documents: '/api/documents',
-      email: '/api/email', // ← AGREGAR
-      requirements: '/api/requirements' // ← VERIFICAR
+      email: '/api/email',
+      requirements: '/api/requirements',
+      ai: '/api/ai'  // ← NUEVO
     }
   });
 });
@@ -77,7 +87,9 @@ app.use('*', (req, res) => {
       'GET /api/projects/health',
       'GET /api/documents/health',
       'GET /api/requirements/health', // ← VERIFICAR
-      'GET /api/requirements/project/:project_id' // ← AGREGAR ESTA LÍNEA
+      'GET /api/requirements/project/:project_id', // ← AGREGAR ESTA LÍNEA
+      'POST /api/ai/chat',
+      'GET /api/ai/knowledge'
     ]
   });
 });

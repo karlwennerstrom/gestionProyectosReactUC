@@ -10,6 +10,8 @@ import RequirementUploadModal from '../components/User/RequirementUploadModal';
 import NotificationSettings from '../components/User/NotificationSettings';
 import { stageRequirements } from '../config/stageRequirements';
 import toast from 'react-hot-toast';
+import AIChatbot from '../components/Common/AIChatbot';
+
 
 const UserDashboard = () => {
   const { user, logout } = useAuth();
@@ -23,6 +25,7 @@ const UserDashboard = () => {
   const [selectedProject, setSelectedProject] = useState(null);
   const [selectedStage, setSelectedStage] = useState('formalization');
   const [selectedRequirement, setSelectedRequirement] = useState(null);
+  const [showChatbot, setShowChatbot] = useState(false);
 
   // Estados para requirement cards con estados reales
   const [projectRequirements, setProjectRequirements] = useState({});
@@ -371,7 +374,20 @@ const UserDashboard = () => {
               >
                 Nuevo Proyecto
               </button>
-
+<button
+  onClick={() => setShowChatbot(!showChatbot)}
+  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${
+    showChatbot 
+      ? 'bg-green-600 hover:bg-green-700 text-white' 
+      : 'bg-purple-600 hover:bg-purple-700 text-white'
+  }`}
+  title="Asistente IA"
+>
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-4l-4 4-4-4z" />
+  </svg>
+  {showChatbot ? 'Cerrar Chat' : 'Asistente IA'}
+</button>
               <button
                 onClick={() => setShowNotificationSettings(true)}
                 className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2"
@@ -863,9 +879,16 @@ const UserDashboard = () => {
             </div>
           </div>
         </div>
+        
       )}
+       <AIChatbot 
+      isMinimized={!showChatbot}
+      onToggle={setShowChatbot}
+    />
     </div>
+    
   );
+  
 };
 
 export default UserDashboard;

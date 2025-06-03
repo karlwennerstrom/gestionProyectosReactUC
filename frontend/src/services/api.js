@@ -5,7 +5,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 60000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -32,7 +32,28 @@ api.interceptors.request.use(
     return Promise.reject(error);
   }
 );
-
+export const aiService = {
+  chat: (message) => 
+    api.post('/ai/chat', { message }),
+  
+  chatProject: (projectId, question) => 
+    api.post(`/ai/chat/project/${projectId}`, { question }),
+  
+  getKnowledgeInfo: () => 
+    api.get('/ai/knowledge'),
+  
+  searchKnowledge: (query) => 
+    api.post('/ai/knowledge/search', { query }),
+  
+  getAIHealth: () => 
+    api.get('/ai/health'),
+  
+  getCacheStats: () => 
+    api.get('/ai/cache/stats'),
+  
+  clearCache: () => 
+    api.post('/ai/cache/clear')
+};
 // Interceptor para responses
 api.interceptors.response.use(
   (response) => {
