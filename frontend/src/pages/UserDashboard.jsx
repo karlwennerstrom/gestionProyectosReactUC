@@ -1,4 +1,4 @@
-// frontend/src/pages/UserDashboard.jsx - CON LIGHTBOX Y ESTADOS
+// frontend/src/pages/UserDashboard.jsx - CON ESTADOS EN TIEMPO REAL
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { projectService, documentService, fileUtils, api } from '../services/api';
@@ -24,13 +24,14 @@ const UserDashboard = () => {
   const [selectedStage, setSelectedStage] = useState('formalization');
   const [selectedRequirement, setSelectedRequirement] = useState(null);
 
-  // ← NUEVOS ESTADOS PARA REQUIREMENT CARDS CON ESTADOS REALES
+  // Estados para requirement cards con estados reales
   const [projectRequirements, setProjectRequirements] = useState({});
   
-  // ← NUEVOS ESTADOS PARA LIGHTBOX DE DOCUMENTOS
+  // Estados para lightbox de documentos
   const [showDocumentModal, setShowDocumentModal] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [loadingDocument, setLoadingDocument] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [newProject, setNewProject] = useState({
     title: '',
@@ -44,23 +45,23 @@ const UserDashboard = () => {
   const loadProjects = async () => {
     try {
       setLoading(true);
-      console.log('Cargando proyectos del usuario...');
+      console.log('🔄 Cargando proyectos del usuario...');
       
       const response = await projectService.getMy();
-      console.log('Proyectos recibidos:', response.data.data.projects);
+      console.log('📋 Proyectos recibidos:', response.data.data.projects);
       
-      // ← CARGAR PROYECTOS CON ESTADOS REALES DE REQUERIMIENTOS
+      // Cargar proyectos con estados reales de requerimientos
       const projectsWithRequirementData = await Promise.all(
         response.data.data.projects.map(async (project) => {
           try {
-            console.log(`Cargando datos para proyecto ${project.id}...`);
+            console.log(`📊 Cargando datos para proyecto ${project.id}...`);
             
             // 1. Cargar documentos del proyecto
             const docsResponse = await documentService.getByProject(project.id);
             const documents = docsResponse.data.data.documents;
-            console.log(`Documentos para proyecto ${project.id}:`, documents);
+            console.log(`📄 Documentos para proyecto ${project.id}:`, documents.length);
             
-            // 2. ← CARGAR ESTADOS REALES DE REQUERIMIENTOS
+            // 2. Cargar estados reales de requerimientos desde la API
             let requirementsData = [];
             try {
               console.log(`📋 Cargando estados de requerimientos para proyecto ${project.id}`);
@@ -77,10 +78,10 @@ const UserDashboard = () => {
                 }));
               }
             } catch (reqError) {
-              console.warn('Error cargando estados de requerimientos:', reqError);
+              console.warn('⚠️ Error cargando estados de requerimientos:', reqError);
             }
             
-            // 3. Analizar completitud USANDO LOS ESTADOS REALES
+            // 3. Analizar completitud usando los estados reales
             const requirementStats = {};
             
             Object.keys(stageRequirements).forEach(stageId => {
@@ -92,26 +93,28 @@ const UserDashboard = () => {
               const completedRequirements = stageRequirementsFromAPI.filter(req => req.status === 'approved').length;
               const inReviewRequirements = stageRequirementsFromAPI.filter(req => req.status === 'in-review').length;
               const rejectedRequirements = stageRequirementsFromAPI.filter(req => req.status === 'rejected').length;
+              const pendingRequirements = stage.requirements.length - completedRequirements - inReviewRequirements - rejectedRequirements;
               
               requirementStats[stageId] = {
                 completed: completedRequirements,
                 inReview: inReviewRequirements,
                 rejected: rejectedRequirements,
+                pending: pendingRequirements,
                 total: stage.requirements.length,
                 percentage: Math.round((completedRequirements / stage.requirements.length) * 100)
               };
               
-              console.log(`✅ Estadísticas REALES para etapa ${stageId}:`, requirementStats[stageId]);
+              console.log(`📊 Estadísticas REALES para etapa ${stageId}:`, requirementStats[stageId]);
             });
             
             return {
               ...project,
               documents,
               requirementStats,
-              requirementsData // ← Incluir los datos reales
+              requirementsData
             };
           } catch (error) {
-            console.error(`Error cargando datos para proyecto ${project.id}:`, error);
+            console.error(`❌ Error cargando datos para proyecto ${project.id}:`, error);
             return {
               ...project,
               documents: [],
@@ -122,25 +125,43 @@ const UserDashboard = () => {
         })
       );
       
-      console.log('Proyectos con datos REALES de requerimientos:', projectsWithRequirementData);
+      console.log('✅ Proyectos con datos REALES de requerimientos cargados');
       setProjects(projectsWithRequirementData);
     } catch (error) {
-      console.error('Error cargando proyectos:', error);
+      console.error('❌ Error cargando proyectos:', error);
       toast.error('Error al cargar los proyectos');
     } finally {
       setLoading(false);
     }
   };
 
-  // ← NUEVA FUNCIÓN PARA VER DOCUMENTO CON LIGHTBOX
+  // Función para refrescar datos después de cambios
+  const refreshData = async (showToast = true) => {
+    try {
+      setRefreshing(true);
+      await loadProjects();
+      if (showToast) {
+        toast.success('Datos actualizados');
+      }
+    } catch (error) {
+      console.error('Error refrescando datos:', error);
+      if (showToast) {
+        toast.error('Error actualizando datos');
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Función para ver documento con lightbox - SOLO DOCUMENTO ACTUAL
   const handleViewDocument = async (requirement) => {
     try {
       setLoadingDocument(true);
       setShowDocumentModal(true);
       
-      console.log('📄 Viendo documento del requerimiento:', requirement);
+      console.log('👁️ Viendo documento del requerimiento:', requirement);
 
-      // Si el requirement ya tiene la información del documento, usarla
+      // Si el requirement tiene información del documento actual, usarla
       if (requirement.current_document_id) {
         try {
           const docResponse = await documentService.getById(requirement.current_document_id);
@@ -162,6 +183,8 @@ const UserDashboard = () => {
             id: requirement.current_document_id,
             original_name: requirement.current_document_name,
             uploaded_at: requirement.current_document_date,
+            file_size: 0,
+            mime_type: 'application/octet-stream',
             requirement_info: {
               requirement_name: requirement.requirement_name,
               stage_name: requirement.stage_name,
@@ -175,7 +198,7 @@ const UserDashboard = () => {
         setShowDocumentModal(false);
       }
     } catch (error) {
-      console.error('Error mostrando documento:', error);
+      console.error('❌ Error mostrando documento:', error);
       toast.error('Error al cargar el documento');
       setShowDocumentModal(false);
     } finally {
@@ -203,7 +226,7 @@ const UserDashboard = () => {
       toast.success('Proyecto creado exitosamente');
       setShowCreateModal(false);
       setNewProject({ title: '', description: '' });
-      loadProjects();
+      await refreshData(false); // Refrescar sin toast adicional
     } catch (error) {
       console.error('Error creando proyecto:', error);
       toast.error(error.response?.data?.message || 'Error al crear proyecto');
@@ -217,15 +240,14 @@ const UserDashboard = () => {
 
   const handleRequirementUploadSuccess = async () => {
     try {
-      console.log('Actualizando datos después de subir documento...');
-      await loadProjects(); // Esto recargará los estados reales
-      toast.success('Datos actualizados correctamente');
+      console.log('🔄 Actualizando datos después de subir documento...');
+      await refreshData(true);
     } catch (error) {
       console.error('Error actualizando datos:', error);
     }
   };
 
-  // ← FUNCIÓN PARA DESCARGAR DOCUMENTO
+  // Función para descargar documento
   const downloadDocument = async (documentId, fileName) => {
     try {
       await fileUtils.downloadFile(documentId, fileName);
@@ -265,11 +287,13 @@ const UserDashboard = () => {
     return '📄';
   };
 
-  const getStageStatusText = (status, completionPercentage) => {
-    if (status === 'completed') return 'Aprobada';
-    if (status === 'rejected') return 'Rechazada';
-    if (status === 'in-progress') return 'En revisión';
-    if (completionPercentage > 0) return `${completionPercentage}% completo`;
+  const getStageStatusText = (status, completionPercentage, stats) => {
+    if (status === 'completed') return 'Etapa Aprobada';
+    if (status === 'rejected') return 'Etapa Rechazada';
+    if (status === 'in-progress') return 'En Revisión';
+    if (completionPercentage > 0) {
+      return `${stats.completed}/${stats.total} aprobados (${completionPercentage}%)`;
+    }
     return 'Sin documentos';
   };
 
@@ -311,7 +335,7 @@ const UserDashboard = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header - SIN CAMBIOS */}
+      {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
@@ -328,6 +352,19 @@ const UserDashboard = () => {
             </div>
             
             <div className="flex items-center space-x-4">
+              {/* Botón de refrescar */}
+              <button
+                onClick={() => refreshData(true)}
+                disabled={refreshing}
+                className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                title="Refrescar datos"
+              >
+                <svg className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {refreshing ? 'Actualizando...' : 'Refrescar'}
+              </button>
+
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors"
@@ -362,6 +399,16 @@ const UserDashboard = () => {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Indicador de actualización */}
+        {refreshing && (
+          <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="flex items-center">
+              <InlineSpinner size="small" />
+              <span className="ml-2 text-blue-800 text-sm">Actualizando estados de requerimientos...</span>
+            </div>
+          </div>
+        )}
+
         {/* Lista de Proyectos */}
         <div className="grid gap-6">
           {projects.length === 0 ? (
@@ -418,21 +465,34 @@ const UserDashboard = () => {
                     </div>
                   </div>
 
-                  {/* ← SECCIÓN DE REQUERIMIENTOS CON ESTADOS REALES */}
+                  {/* Sección de requerimientos con estados reales */}
                   <div className="border-t pt-4 mt-4">
-                    <h4 className="text-sm font-medium text-gray-900 mb-4">Requerimientos por Etapa</h4>
+                    <h4 className="text-sm font-medium text-gray-900 mb-4">
+                      Requerimientos por Etapa 
+                      <span className="text-xs text-gray-500 ml-2">
+                        (Estados en tiempo real)
+                      </span>
+                    </h4>
                     
-                    {/* Grid de etapas con RequirementCards REALES */}
+                    {/* Grid de etapas con RequirementCards reales */}
                     <div className="space-y-6">
                       {Object.entries(stageRequirements).map(([stageId, stage]) => {
                         const stageStatus = getStageStatus(project, stageId);
                         const stageComments = getStageComments(project, stageId);
-                        const requirementStat = project.requirementStats?.[stageId] || { completed: 0, total: stage.requirements.length, percentage: 0 };
+                        const requirementStat = project.requirementStats?.[stageId] || { 
+                          completed: 0, 
+                          inReview: 0,
+                          rejected: 0,
+                          pending: stage.requirements.length,
+                          total: stage.requirements.length, 
+                          percentage: 0 
+                        };
+                        
                         const isRejected = stageStatus === 'rejected';
                         const isApproved = stageStatus === 'completed';
                         const isInReview = stageStatus === 'in-progress';
                         
-                        // ← OBTENER REQUERIMIENTOS REALES DE LA API
+                        // Obtener requerimientos reales de la API
                         const realRequirements = projectRequirements[project.id] || project.requirementsData || [];
                         
                         return (
@@ -451,6 +511,11 @@ const UserDashboard = () => {
                                 <span className="text-xs font-medium text-gray-600">
                                   {requirementStat.completed}/{requirementStat.total} aprobados
                                 </span>
+                                {requirementStat.rejected > 0 && (
+                                  <span className="text-xs font-medium text-red-600">
+                                    ({requirementStat.rejected} rechazados)
+                                  </span>
+                                )}
                               </div>
                             </div>
 
@@ -474,7 +539,7 @@ const UserDashboard = () => {
                                   isRejected ? 'text-red-700' :
                                   'text-yellow-700'
                                 }`}>
-                                  {getStageStatusText(stageStatus, requirementStat.percentage)}
+                                  {getStageStatusText(stageStatus, requirementStat.percentage, requirementStat)}
                                 </span>
                                 <span className="text-xs text-gray-500">
                                   {requirementStat.percentage}% completo
@@ -490,21 +555,21 @@ const UserDashboard = () => {
                               </div>
                             )}
 
-                            {/* ← REQUIREMENT CARDS CON ESTADOS REALES */}
+                            {/* Requirement Cards con estados reales */}
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                               {stage.requirements.map((requirement) => {
-                                // ← BUSCAR EL REQUERIMIENTO REAL EN LOS DATOS DE LA API
+                                // Buscar el requerimiento real en los datos de la API
                                 const realRequirement = realRequirements.find(
                                   req => req.stage_name === stageId && req.requirement_id === requirement.id
                                 );
 
-                                // ← CREAR OBJETO CON DATOS REALES O DEFAULTS
+                                // Crear objeto con datos reales o defaults
                                 const requirementForCard = realRequirement || {
                                   project_id: project.id,
                                   stage_name: stageId,
                                   requirement_id: requirement.id,
                                   requirement_name: requirement.name,
-                                  status: 'pending', // ← Estado por defecto
+                                  status: 'pending',
                                   has_current_document: false,
                                   current_document_name: null,
                                   current_document_date: null,
@@ -522,7 +587,7 @@ const UserDashboard = () => {
                                     isAdmin={false}
                                     projectId={project.id}
                                     stageName={stageId}
-                                    onViewDocuments={handleViewDocument} // ← NUEVA FUNCIÓN
+                                    onViewDocuments={handleViewDocument}
                                     onUploadDocument={handleRequirementClick}
                                   />
                                 );
@@ -558,7 +623,7 @@ const UserDashboard = () => {
                                 .reduce((sum, stat) => sum + stat.completed, 0);
                               const totalRequirements = Object.values(stageRequirements)
                                 .reduce((sum, stage) => sum + stage.requirements.length, 0);
-                              return (totalCompleted / totalRequirements) * 100;
+                              return Math.round((totalCompleted / totalRequirements) * 100);
                             })()}%` 
                           }}
                         ></div>
@@ -572,7 +637,7 @@ const UserDashboard = () => {
         </div>
       </div>
 
-      {/* MODALES EXISTENTES - SIN CAMBIOS */}
+      {/* Modales - sin cambios */}
       {/* Modal Crear Proyecto */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -654,7 +719,7 @@ const UserDashboard = () => {
         />
       )}
 
-      {/* ← NUEVO: MODAL LIGHTBOX PARA VER DOCUMENTO */}
+      {/* Modal Lightbox para ver documento */}
       {showDocumentModal && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[80vh] overflow-hidden">
