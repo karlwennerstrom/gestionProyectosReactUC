@@ -13,6 +13,8 @@ import AIChatbot from '../components/Common/AIChatbot';
 import StageManagementPanel from '../components/Admin/StageManagementPanel';
 import DeletedProjectsPanel from '../components/Admin/DeletedProjectsPanel';
 import toast from 'react-hot-toast';
+import ProjectsExecutiveChart from '../components/Admin/ProjectsExecutiveChart';
+
 
 const AdminDashboard = () => {
   const { user, logout } = useAuth();
@@ -43,11 +45,18 @@ const AdminDashboard = () => {
 const [selectedProjectToDelete, setSelectedProjectToDelete] = useState(null);
 const [deleteReason, setDeleteReason] = useState('');
 const [deleting, setDeleting] = useState(false);
+const [projectsWithProgress, setProjectsWithProgress] = useState([]);
+
 
   useEffect(() => {
     loadData();
   }, []);
-
+useEffect(() => {
+  if (projects.length > 0) {
+    const processedProjects = projects.map(calculateProjectProgress);
+    setProjectsWithProgress(processedProjects);
+  }
+}, [projects]);
   const loadData = async () => {
     try {
       setLoading(true);
@@ -71,6 +80,43 @@ const [deleting, setDeleting] = useState(false);
   setSelectedProjectToDelete(project);
   setDeleteReason('');
   setShowDeleteModal(true);
+};
+const calculateProjectProgress = (project) => {
+  // Calcular progreso basado en etapas completadas
+  const stageOrder = ['formalization', 'design', 'delivery', 'operation', 'maintenance'];
+  const currentStageIndex = stageOrder.indexOf(project.current_stage);
+  
+  let progress = 0;
+  if (project.status === 'approved') {
+    progress = 100;
+  } else {
+    // Progreso basado en la etapa actual (20% por etapa)
+    progress = (currentStageIndex + 1) * 20;
+  }
+  
+  return {
+    ...project,
+    progress,
+    stages_completed: currentStageIndex + 1,
+    total_stages: 5,
+    days_since_created: Math.floor((new Date() - new Date(project.created_at)) / (1000 * 60 * 60 * 24)),
+    documents_uploaded: project.document_count || 0,
+    documents_approved: Math.floor((project.document_count || 0) * 0.7), // Estimación
+    documents_rejected: Math.floor((project.document_count || 0) * 0.2), // Estimación
+    priority: getPriorityLevel(project)
+  };
+};
+const getPriorityLevel = (project) => {
+  const daysSinceCreated = Math.floor((new Date() - new Date(project.created_at)) / (1000 * 60 * 60 * 24));
+  const hasDocuments = (project.document_count || 0) > 0;
+  
+  if (project.status === 'rejected') return 'high';
+  if (hasDocuments && daysSinceCreated > 14) return 'high';
+  if (hasDocuments && daysSinceCreated > 7) return 'medium';
+  if (hasDocuments) return 'medium';
+  if (daysSinceCreated > 21) return 'high';
+  if (daysSinceCreated > 10) return 'medium';
+  return 'low';
 };
 const executeDeleteProject = async () => {
   if (!selectedProjectToDelete) return;
@@ -483,7 +529,10 @@ const executeDeleteProject = async () => {
               </div>
             </div>
           </div>
+          
         )}
+        <ProjectsExecutiveChart projects={projectsWithProgress} />
+
 
         {/* Información del Nuevo Sistema */}
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">

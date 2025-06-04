@@ -1,21 +1,100 @@
-// backend/models/Project.js - CON ELIMINACIÓN LÓGICA
+// backend/models/Project.js - CORRECCIÓN DEFINITIVA
 const { executeQuery, getOne, insertAndGetId } = require('../config/database');
 const emailService = require('../services/emailService');
 
 class Project {
 
-  // Generar código único para proyecto
+  // ✅ CORRECCIÓN DEFINITIVA: Generar código único considerando solo proyectos activos
   static async generateProjectCode() {
     try {
       const year = new Date().getFullYear();
-      const result = await getOne(
-        'SELECT COUNT(*) + 1 as next_number FROM projects WHERE code LIKE ? AND deleted_at IS NULL',
-        [`PROJ-${year}-%`]
-      );
-      const nextNumber = result.next_number.toString().padStart(3, '0');
-      return `PROJ-${year}-${nextNumber}`;
+      
+      console.log(`🔍 Generando código para año ${year}...`);
+      
+      // ✅ CONSULTA CORRECTA: Obtener todos los códigos existentes ACTIVOS para el año
+      const existingCodes = await executeQuery(`
+        SELECT code 
+        FROM projects 
+        WHERE code LIKE ? AND deleted_at IS NULL
+        ORDER BY code
+      `, [`PROJ-${year}-%`]);
+      
+      console.log(`📊 Códigos existentes encontrados:`, existingCodes.map(row => row.code));
+      
+      // Extraer números de los códigos existentes
+      const usedNumbers = existingCodes.map(row => {
+        const match = row.code.match(/PROJ-\d{4}-(\d{3})/);
+        return match ? parseInt(match[1]) : 0;
+      }).filter(num => num > 0);
+      
+      console.log(`🔢 Números usados:`, usedNumbers);
+      
+      // Encontrar el siguiente número disponible
+      let nextNumber = 1;
+      while (usedNumbers.includes(nextNumber)) {
+        nextNumber++;
+      }
+      
+      const generatedCode = `PROJ-${year}-${nextNumber.toString().padStart(3, '0')}`;
+      
+      console.log(`✅ Código generado: ${generatedCode} (siguiente disponible: ${nextNumber})`);
+      
+      // ✅ VERIFICACIÓN FINAL: Confirmar que el código no existe
+      const existingProject = await getOne(`
+        SELECT id FROM projects 
+        WHERE code = ?
+      `, [generatedCode]);
+      
+      if (existingProject) {
+        console.error(`❌ CRITICAL: Código ${generatedCode} ya existe con ID ${existingProject.id}`);
+        // Intentar con el siguiente número
+        return await this.generateUniqueCodeFallback(year, nextNumber + 1);
+      }
+      
+      return generatedCode;
+      
     } catch (error) {
-      throw new Error(`Error generando código: ${error.message}`);
+      console.error('❌ Error generando código:', error);
+      // Fallback: usar timestamp
+      const timestamp = Date.now().toString().slice(-6);
+      return `PROJ-${new Date().getFullYear()}-${timestamp}`;
+    }
+  }
+
+  // ✅ FUNCIÓN DE RESPALDO: Generar código único garantizado
+  static async generateUniqueCodeFallback(year, startFrom = 1) {
+    try {
+      console.log(`🔄 Generando código de respaldo desde ${startFrom}...`);
+      
+      let attempts = 0;
+      let currentNumber = startFrom;
+      const maxAttempts = 1000; // Evitar bucle infinito
+      
+      while (attempts < maxAttempts) {
+        const candidateCode = `PROJ-${year}-${currentNumber.toString().padStart(3, '0')}`;
+        
+        const exists = await getOne(`
+          SELECT id FROM projects WHERE code = ?
+        `, [candidateCode]);
+        
+        if (!exists) {
+          console.log(`✅ Código único encontrado: ${candidateCode}`);
+          return candidateCode;
+        }
+        
+        currentNumber++;
+        attempts++;
+      }
+      
+      // Si llegamos aquí, usar timestamp como último recurso
+      const timestamp = Date.now().toString().slice(-6);
+      const emergencyCode = `PROJ-${year}-E${timestamp}`;
+      console.warn(`⚠️ Usando código de emergencia: ${emergencyCode}`);
+      return emergencyCode;
+      
+    } catch (error) {
+      console.error('❌ Error en código de respaldo:', error);
+      throw error;
     }
   }
 
@@ -80,27 +159,53 @@ class Project {
     }
   }
 
-  // Crear nuevo proyecto
+  // ✅ FUNCIÓN CREATE COMPLETAMENTE REESCRITA
   static async create(projectData) {
-    try {
-      const { title, description, user_id } = projectData;
-      
-      // Generar código único
-      const code = await this.generateProjectCode();
-      
-      // Insertar proyecto
-      const projectId = await insertAndGetId(`
-        INSERT INTO projects (code, title, description, user_id, status, current_stage) 
-        VALUES (?, ?, ?, ?, 'pending', 'formalization')
-      `, [code, title, description, user_id]);
+    const maxRetries = 5;
+    let attempt = 0;
+    
+    while (attempt < maxRetries) {
+      try {
+        attempt++;
+        const { title, description, user_id } = projectData;
+        
+        console.log(`🚀 Intento ${attempt}/${maxRetries} - Creando proyecto...`);
+        
+        // Generar código único
+        const code = await this.generateProjectCode();
+        
+        console.log(`📝 Intentando insertar proyecto con código: ${code}`);
+        
+        // ✅ INSERCIÓN CON MANEJO DE DUPLICADOS
+        const projectId = await insertAndGetId(`
+          INSERT INTO projects (code, title, description, user_id, status, current_stage) 
+          VALUES (?, ?, ?, ?, 'pending', 'formalization')
+        `, [code, title, description, user_id]);
 
-      // Crear todas las etapas por defecto
-      await this.createDefaultStages(projectId);
+        console.log(`✅ Proyecto creado exitosamente: ID=${projectId}, código=${code}`);
 
-      return await this.findById(projectId);
-    } catch (error) {
-      throw new Error(`Error creando proyecto: ${error.message}`);
+        // Crear etapas por defecto
+        await this.createDefaultStages(projectId);
+
+        return await this.findById(projectId);
+        
+      } catch (error) {
+        console.error(`❌ Error en intento ${attempt}:`, error.message);
+        
+        // Si es error de duplicado y aún tenemos intentos, continuar
+        if (error.code === 'ER_DUP_ENTRY' && attempt < maxRetries) {
+          console.warn(`⚠️ Código duplicado en intento ${attempt}, reintentando...`);
+          // Esperar un poco antes de reintentar
+          await new Promise(resolve => setTimeout(resolve, 200 * attempt));
+          continue;
+        }
+        
+        // Si no es error de duplicado o se agotaron los intentos, fallar
+        throw new Error(`Error creando proyecto (intento ${attempt}): ${error.message}`);
+      }
     }
+    
+    throw new Error('No se pudo crear el proyecto después de múltiples intentos - posible problema con generación de códigos únicos');
   }
 
   // Crear etapas por defecto para un proyecto
@@ -121,6 +226,8 @@ class Project {
           VALUES (?, ?, ?)
         `, [projectId, stages[i], status]);
       }
+      
+      console.log(`✅ Etapas por defecto creadas para proyecto ${projectId}`);
     } catch (error) {
       throw new Error(`Error creando etapas: ${error.message}`);
     }
