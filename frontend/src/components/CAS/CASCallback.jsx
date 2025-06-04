@@ -1,4 +1,4 @@
-// frontend/src/components/CAS/CASCallback.jsx
+// frontend/src/components/CAS/CASCallback.jsx - CORREGIDO
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -10,7 +10,7 @@ const CASCallback = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { setUser, setToken } = useAuth();
-  const [status, setStatus] = useState('processing'); // processing, success, error
+  const [status, setStatus] = useState('processing');
 
   useEffect(() => {
     processCASCallback();
@@ -21,7 +21,11 @@ const CASCallback = () => {
       const ticket = searchParams.get('ticket');
       const returnUrl = searchParams.get('returnUrl') || '/dashboard';
 
-      console.log('🎫 Procesando callback CAS:', { ticket: ticket?.substring(0, 20) + '...', returnUrl });
+      console.log('🎫 Procesando callback CAS:', { 
+        ticket: ticket?.substring(0, 20) + '...', 
+        returnUrl,
+        fullUrl: window.location.href 
+      });
 
       if (!ticket) {
         console.error('❌ No se recibió ticket de CAS');
@@ -31,75 +35,78 @@ const CASCallback = () => {
         return;
       }
 
-      // Construir la URL del servicio que debe coincidir con lo que se envió a CAS
-      const serviceUrl = `${window.location.origin}/auth/cas/callback?returnUrl=${encodeURIComponent(returnUrl)}`;
-      
-      console.log('🔄 Validando ticket con servicio:', serviceUrl);
+      console.log('🔄 Enviando ticket al backend para validación...');
 
-      // Llamar al backend para validar el ticket
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/cas/callback?ticket=${ticket}&returnUrl=${encodeURIComponent(returnUrl)}`, {
-        method: 'GET',
-        credentials: 'include'
+      // ✅ USAR LA API CONFIGURADA EN LUGAR DE FETCH DIRECTO
+      const response = await api.get('/cas/callback', {
+        params: {
+          ticket: ticket,
+          returnUrl: returnUrl
+        }
       });
 
-      console.log('📡 Respuesta del backend:', response.status);
+      console.log('✅ Respuesta del backend recibida:', response.data);
 
-      if (response.ok) {
-        // Si la respuesta es exitosa, el backend debería haber redirigido
-        // Pero si llegamos aquí, procesamos la respuesta
-        const data = await response.json();
-        console.log('✅ Datos recibidos:', data);
-
-        if (data.success && data.token) {
-          // Configurar autenticación
-          localStorage.setItem('token', data.token);
-          api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
-          
-          // Obtener datos del usuario
-          try {
-            const userResponse = await api.get('/auth/verify');
-            if (userResponse.data.success) {
-              setUser(userResponse.data.data.user);
-              setToken(data.token);
-              
-              setStatus('success');
-              
-              // Mostrar mensaje de bienvenida
-              const welcomeMessage = data.isNewUser 
-                ? `¡Bienvenido al sistema! Usuario creado: ${userResponse.data.data.user.full_name}`
-                : `¡Bienvenido, ${userResponse.data.data.user.full_name}!`;
-              
-              toast.success(welcomeMessage);
-              
-              // Redirigir según rol
-              const finalUrl = userResponse.data.data.user.role === 'admin' ? '/admin' : '/dashboard';
-              setTimeout(() => navigate(finalUrl), 1000);
-            }
-          } catch (userError) {
-            console.error('Error obteniendo datos del usuario:', userError);
-            setStatus('error');
-            toast.error('Error obteniendo datos del usuario');
-            setTimeout(() => navigate('/login?error=user_fetch_failed'), 2000);
-          }
-        } else {
-          throw new Error(data.message || 'Respuesta inválida del servidor');
-        }
+      if (response.data.success && response.data.token) {
+        // Configurar autenticación
+        localStorage.setItem('token', response.data.token);
+        api.defaults.headers.common['Authorization'] = `Bearer ${response.data.token}`;
+        
+        // Establecer usuario y token en el contexto
+        setUser(response.data.user);
+        setToken(response.data.token);
+        
+        setStatus('success');
+        
+        // Mostrar mensaje de bienvenida
+        const welcomeMessage = response.data.isNewUser 
+          ? `¡Bienvenido al sistema! Usuario creado: ${response.data.user.full_name}`
+          : `¡Bienvenida de vuelta, ${response.data.user.full_name}!`;
+        
+        toast.success(welcomeMessage);
+        
+        // Redirigir según rol
+        const finalUrl = response.data.user.role === 'admin' ? '/admin' : '/dashboard';
+        console.log(`🎯 Redirigiendo a: ${finalUrl}`);
+        
+        setTimeout(() => navigate(finalUrl, { replace: true }), 1500);
       } else {
-        // Verificar si fue una redirección del backend
-        if (response.redirected) {
-          console.log('🔄 Backend redirigió a:', response.url);
-          window.location.href = response.url;
-          return;
-        }
-
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Error del servidor: ${response.status}`);
+        throw new Error(response.data.message || 'Respuesta inválida del servidor');
       }
 
     } catch (error) {
       console.error('❌ Error procesando callback CAS:', error);
       setStatus('error');
-      toast.error(`Error en autenticación CAS: ${error.message}`);
+      
+      let errorMessage = 'Error en autenticación CAS';
+      
+      if (error.response) {
+        const errorData = error.response.data;
+        console.error('Error del backend:', errorData);
+        
+        switch (errorData.error) {
+          case 'no_ticket':
+            errorMessage = 'No se recibió ticket de autenticación';
+            break;
+          case 'cas_validation_failed':
+            errorMessage = 'Error validando con CAS: ' + (errorData.details || 'Ticket inválido');
+            break;
+          case 'user_not_authorized':
+            errorMessage = 'Usuario no autorizado: ' + (errorData.details || 'Contacta al administrador');
+            break;
+          case 'cas_callback_error':
+            errorMessage = 'Error en callback CAS: ' + (errorData.details || 'Error interno');
+            break;
+          default:
+            errorMessage = errorData.message || 'Error desconocido';
+        }
+      } else if (error.request) {
+        errorMessage = 'Error de conexión con el servidor';
+      } else {
+        errorMessage = error.message;
+      }
+      
+      toast.error(errorMessage, { duration: 6000 });
       setTimeout(() => navigate('/login?error=cas_callback_error'), 3000);
     }
   };
@@ -107,9 +114,9 @@ const CASCallback = () => {
   const getStatusMessage = () => {
     switch (status) {
       case 'processing':
-        return 'Procesando autenticación CAS...';
+        return 'Validando credenciales con CAS UC...';
       case 'success':
-        return '¡Autenticación exitosa! Redirigiendo...';
+        return '¡Autenticación exitosa! Redirigiendo al dashboard...';
       case 'error':
         return 'Error en la autenticación. Redirigiendo al login...';
       default:
@@ -163,7 +170,7 @@ const CASCallback = () => {
 
           {/* Title */}
           <h2 className="text-xl font-semibold text-gray-900 mb-4">
-            Autenticación CAS
+            🏛️ Autenticación CAS UC
           </h2>
 
           {/* Status Message */}
@@ -173,59 +180,97 @@ const CASCallback = () => {
 
           {/* Loading Spinner for processing */}
           {status === 'processing' && (
-            <div className="flex justify-center mb-4">
+            <div className="flex justify-center mb-6">
               <InlineSpinner size="medium" />
             </div>
           )}
 
           {/* Progress Steps */}
-          <div className="space-y-2 text-xs text-gray-500">
-            <div className={`flex items-center justify-center ${status !== 'processing' ? 'opacity-50' : ''}`}>
-              <span className="w-4 h-4 bg-blue-500 rounded-full mr-2 flex items-center justify-center text-white text-xs">
-                {status === 'processing' ? '⏳' : '✓'}
+          <div className="space-y-3 text-xs text-gray-600 mb-6">
+            <div className={`flex items-center justify-center transition-opacity ${
+              status === 'processing' ? 'opacity-100' : 'opacity-70'
+            }`}>
+              <span className={`w-5 h-5 rounded-full mr-3 flex items-center justify-center text-white text-xs ${
+                status !== 'error' ? 'bg-blue-500' : 'bg-red-500'
+              }`}>
+                {status === 'processing' ? '1' : status === 'error' ? '✗' : '✓'}
               </span>
-              Validando ticket CAS
+              <span>Validando ticket con CAS UC</span>
             </div>
-            <div className={`flex items-center justify-center ${status !== 'success' && status !== 'processing' ? 'opacity-50' : ''}`}>
-              <span className={`w-4 h-4 rounded-full mr-2 flex items-center justify-center text-white text-xs ${
+            
+            <div className={`flex items-center justify-center transition-opacity ${
+              status === 'success' ? 'opacity-100' : 'opacity-50'
+            }`}>
+              <span className={`w-5 h-5 rounded-full mr-3 flex items-center justify-center text-white text-xs ${
                 status === 'success' ? 'bg-green-500' : status === 'error' ? 'bg-red-500' : 'bg-gray-400'
               }`}>
                 {status === 'success' ? '✓' : status === 'error' ? '✗' : '2'}
               </span>
-              Configurando sesión
+              <span>Configurando sesión de usuario</span>
             </div>
-            <div className={`flex items-center justify-center ${status !== 'success' ? 'opacity-50' : ''}`}>
-              <span className={`w-4 h-4 rounded-full mr-2 flex items-center justify-center text-white text-xs ${
+            
+            <div className={`flex items-center justify-center transition-opacity ${
+              status === 'success' ? 'opacity-100' : 'opacity-50'
+            }`}>
+              <span className={`w-5 h-5 rounded-full mr-3 flex items-center justify-center text-white text-xs ${
                 status === 'success' ? 'bg-green-500' : 'bg-gray-400'
               }`}>
                 {status === 'success' ? '✓' : '3'}
               </span>
-              Redirigiendo al dashboard
+              <span>Redirigiendo al sistema</span>
             </div>
           </div>
 
+          {/* Success Message */}
+          {status === 'success' && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-center text-green-800">
+                <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+                <span className="text-sm font-medium">Autenticación exitosa con CAS UC</span>
+              </div>
+            </div>
+          )}
+
           {/* Error Actions */}
           {status === 'error' && (
-            <div className="mt-6 space-y-2">
+            <div className="space-y-3">
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                <div className="flex items-center justify-center text-red-800">
+                  <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-sm font-medium">Error en autenticación CAS</span>
+                </div>
+              </div>
+              
               <button
                 onClick={() => navigate('/login')}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors"
               >
-                Volver al Login
+                🔙 Volver al Login
               </button>
+              
               <button
                 onClick={() => window.location.reload()}
                 className="w-full bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-4 rounded-md transition-colors"
               >
-                Reintentar
+                🔄 Reintentar Autenticación
               </button>
             </div>
           )}
 
-          {/* Footer */}
+          {/* Help Text */}
           <div className="mt-6 text-xs text-gray-500">
+            <p>¿Problemas con el acceso?</p>
+            <p>Contacta al soporte técnico UC</p>
+          </div>
+
+          {/* Footer */}
+          <div className="mt-4 text-xs text-gray-400">
             <p>Universidad Católica © 2025</p>
-            <p>Sistema de Gestión de Proyectos</p>
+            <p>Sistema de Gestión de Proyectos v2.1</p>
           </div>
         </div>
       </div>

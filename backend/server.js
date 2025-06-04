@@ -44,7 +44,43 @@ app.use('/api/email', emailRoutes);
 app.use('/api/requirements', requirementRoutes); 
 app.use('/api/ai', aiRoutes);
 app.use('/api/cas', casRoutes); // ← NUEVA RUTA CAS
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`${timestamp} - ${req.method} ${req.originalUrl}`);
+  
+  // Log específico para rutas CAS
+  if (req.originalUrl.includes('/cas/')) {
+    console.log('🎫 CAS Request Details:', {
+      method: req.method,
+      url: req.originalUrl,
+      headers: {
+        'user-agent': req.get('user-agent'),
+        'referer': req.get('referer'),
+        'host': req.get('host')
+      },
+      query: req.query,
+      body: req.body
+    });
+  }
+  
+  next();
+});
 
+// ← TEST ENDPOINT ESPECÍFICO PARA CAS
+app.get('/api/cas/test', (req, res) => {
+  console.log('🧪 Test endpoint CAS llamado');
+  res.json({
+    success: true,
+    message: 'Test endpoint CAS funcionando',
+    timestamp: new Date().toISOString(),
+    request_details: {
+      method: req.method,
+      url: req.originalUrl,
+      query: req.query,
+      headers: req.headers
+    }
+  });
+});
 // Health check principal
 app.get('/api/health', async (req, res) => {
   const ollamaService = require('./services/ollamaService');

@@ -1,4 +1,4 @@
-// backend/routes/cas.js - CORREGIDO para manejar callback apropiadamente
+// backend/routes/cas.js - MEJORADA para mejor redirección
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const casService = require('../services/casService');
@@ -26,15 +26,9 @@ router.get('/health', (req, res) => {
     message: 'Módulo CAS funcionando',
     cas_enabled: casService.isEnabled(),
     cas_base_url: process.env.CAS_BASE_URL,
-    timestamp: new Date().toISOString(),
-    routes: {
-      public: [
-        'GET /api/cas/health',
-        'GET /api/cas/login',
-        'GET /api/cas/callback',
-        'GET /api/cas/logout'
-      ]
-    }
+    backend_url: process.env.BACKEND_URL || 'http://localhost:5000',
+    frontend_url: process.env.FRONTEND_URL || 'http://localhost:3000',
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -51,12 +45,13 @@ router.get('/login', (req, res) => {
     const returnUrl = req.query.returnUrl || '/dashboard';
     const casLoginUrl = casService.getLoginUrl(returnUrl);
     
-    console.log('🔗 Redirigiendo a CAS:', casLoginUrl);
+    console.log('🔗 Iniciando login CAS:');
+    console.log(`   - Return URL solicitada: ${returnUrl}`);
+    console.log(`   - Redirigiendo a CAS: ${casLoginUrl}`);
     
-    // Redirigir al usuario a CAS
     res.redirect(casLoginUrl);
   } catch (error) {
-    console.error('Error iniciando login CAS:', error);
+    console.error('❌ Error iniciando login CAS:', error);
     res.status(500).json({
       success: false,
       message: 'Error iniciando autenticación CAS'
@@ -64,38 +59,31 @@ router.get('/login', (req, res) => {
   }
 });
 
-// ← CALLBACK CORREGIDO - AHORA RETORNA JSON EN LUGAR DE REDIRECCIONAR
+// ✅ CALLBACK MEJORADO - Mejor manejo de redirección según rol
 router.get('/callback', async (req, res) => {
   try {
     const { ticket, returnUrl = '/dashboard' } = req.query;
     
     if (!ticket) {
       console.error('❌ No se recibió ticket de CAS');
-      return res.status(400).json({
-        success: false,
-        message: 'No se recibió ticket de CAS',
-        error: 'no_ticket'
-      });
+      const errorUrl = `${process.env.FRONTEND_URL}/login?error=no_ticket&message=${encodeURIComponent('No se recibió ticket de CAS')}`;
+      return res.redirect(errorUrl);
     }
 
-    console.log('🎫 Procesando callback CAS con ticket:', ticket.substring(0, 20) + '...');
+    console.log('🎫 Procesando callback CAS:');
+    console.log(`   - Ticket: ${ticket.substring(0, 20)}...`);
+    console.log(`   - Return URL: ${returnUrl}`);
 
-    // Construir service URL que coincida con lo que espera el frontend
-    const serviceUrl = `${process.env.FRONTEND_URL}/auth/cas/callback?returnUrl=${encodeURIComponent(returnUrl)}`;
-    
-    console.log('🔄 Service URL para validación:', serviceUrl);
-    
     // Validar ticket con CAS
+    const serviceUrl = casService.getServiceUrl(returnUrl);
+    console.log(`   - Service URL: ${serviceUrl}`);
+    
     const validation = await casService.validateTicket(ticket, serviceUrl);
     
     if (!validation.success) {
       console.error('❌ Validación CAS falló:', validation.error);
-      return res.status(401).json({
-        success: false,
-        message: 'Validación CAS falló',
-        error: 'cas_validation_failed',
-        details: validation.error
-      });
+      const errorUrl = `${process.env.FRONTEND_URL}/login?error=cas_validation_failed&message=${encodeURIComponent(validation.error)}`;
+      return res.redirect(errorUrl);
     }
 
     console.log('✅ Ticket CAS válido para usuario:', validation.username);
@@ -105,13 +93,8 @@ router.get('/callback', async (req, res) => {
     
     if (!userResult.success) {
       console.error('❌ Error procesando usuario CAS:', userResult.error);
-      return res.status(403).json({
-        success: false,
-        message: 'Usuario no autorizado',
-        error: 'user_not_authorized',
-        details: userResult.error,
-        email: userResult.email
-      });
+      const errorUrl = `${process.env.FRONTEND_URL}/login?error=user_not_authorized&message=${encodeURIComponent(userResult.error)}`;
+      return res.redirect(errorUrl);
     }
 
     const { user, isNewUser } = userResult;
@@ -119,32 +102,47 @@ router.get('/callback', async (req, res) => {
     // Generar JWT token
     const token = generateToken(user);
     
-    console.log(`✅ Login CAS exitoso para ${user.email} (${user.role})${isNewUser ? ' - USUARIO NUEVO' : ''}`);
-    
-    // ← RETORNAR JSON CON TOKEN EN LUGAR DE REDIRECCIONAR
-    res.json({
-      success: true,
-      message: 'Autenticación CAS exitosa',
-      token: token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        full_name: user.full_name,
-        role: user.role
-      },
-      isNewUser: isNewUser,
-      returnUrl: returnUrl
+    console.log(`✅ Login CAS exitoso:`, {
+      email: user.email,
+      role: user.role,
+      isNewUser: isNewUser
     });
+    
+    // ✅ LÓGICA MEJORADA DE REDIRECCIÓN
+    let finalRedirectUrl;
+    
+    // 1. Si es admin, siempre ir a /admin
+    if (user.role === 'admin') {
+      finalRedirectUrl = '/admin';
+      console.log('👨‍💼 Usuario admin - redirigiendo a /admin');
+    }
+    // 2. Si es user, ir a dashboard
+    else if (user.role === 'user') {
+      finalRedirectUrl = '/dashboard';
+      console.log('👤 Usuario normal - redirigiendo a /dashboard');
+    }
+    // 3. Fallback al returnUrl original
+    else {
+      finalRedirectUrl = returnUrl;
+      console.log(`🔄 Usando returnUrl original: ${returnUrl}`);
+    }
+    
+    // Construir URL final con parámetros CAS
+    const params = new URLSearchParams({
+      cas_login: 'true',
+      token: token,
+      new_user: isNewUser.toString()
+    });
+    
+    const successUrl = `${process.env.FRONTEND_URL}${finalRedirectUrl}?${params.toString()}`;
+    
+    console.log('🎯 Redirigiendo a frontend:', successUrl);
+    res.redirect(successUrl);
     
   } catch (error) {
     console.error('❌ Error en callback CAS:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error interno procesando callback CAS',
-      error: 'cas_callback_error',
-      details: error.message
-    });
+    const errorUrl = `${process.env.FRONTEND_URL}/login?error=cas_callback_error&message=${encodeURIComponent(error.message)}`;
+    res.redirect(errorUrl);
   }
 });
 
@@ -160,7 +158,7 @@ router.get('/logout', (req, res) => {
     
     res.redirect(casLogoutUrl);
   } catch (error) {
-    console.error('Error en logout CAS:', error);
+    console.error('❌ Error en logout CAS:', error);
     res.redirect(`${process.env.FRONTEND_URL}/login`);
   }
 });
@@ -182,11 +180,12 @@ router.get('/login-url', (req, res) => {
       success: true,
       data: {
         login_url: loginUrl,
-        cas_enabled: true
+        cas_enabled: true,
+        service_url: casService.getServiceUrl(returnUrl)
       }
     });
   } catch (error) {
-    console.error('Error obteniendo URL de login CAS:', error);
+    console.error('❌ Error obteniendo URL de login CAS:', error);
     res.status(500).json({
       success: false,
       message: 'Error generando URL de login CAS'
@@ -201,8 +200,9 @@ router.get('/status', (req, res) => {
     data: {
       cas_enabled: casService.isEnabled(),
       cas_base_url: process.env.CAS_BASE_URL || 'No configurado',
-      auto_create_users: process.env.CAS_AUTO_CREATE_USERS === 'true',
-      frontend_url: process.env.FRONTEND_URL || 'No configurado'
+      backend_url: process.env.BACKEND_URL || 'http://localhost:5000',
+      frontend_url: process.env.FRONTEND_URL || 'http://localhost:3000',
+      auto_create_users: process.env.CAS_AUTO_CREATE_USERS === 'true'
     }
   });
 });

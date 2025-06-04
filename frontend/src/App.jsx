@@ -1,4 +1,4 @@
-// frontend/src/App.jsx - Actualizado con rutas CAS
+// frontend/src/App.jsx - Rutas CAS corregidas
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
@@ -6,8 +6,10 @@ import ProtectedRoute from './components/Common/ProtectedRoute';
 import Login from './pages/Login';
 import AdminDashboard from './pages/AdminDashboard';
 import UserDashboard from './pages/UserDashboard';
-import CASCallback from './components/CAS/CASCallback'; // ← NUEVO COMPONENTE
 import { Toaster } from 'react-hot-toast';
+
+// ✅ IMPORTAR COMPONENTE CAS CALLBACK
+import CASCallback from './components/CAS/CASCallback';
 
 function App() {
   return (
@@ -15,10 +17,10 @@ function App() {
       <Router>
         <div className="min-h-screen bg-gray-50">
           <Routes>
-            {/* Ruta pública */}
+            {/* Rutas públicas */}
             <Route path="/login" element={<Login />} />
             
-            {/* ← NUEVA RUTA PARA CAS CALLBACK */}
+            {/* ✅ RUTA PARA CAS CALLBACK */}
             <Route path="/auth/cas/callback" element={<CASCallback />} />
             
             {/* Rutas protegidas */}
@@ -49,9 +51,12 @@ function App() {
                 <div className="text-center">
                   <h1 className="text-4xl font-bold text-gray-800 mb-4">404</h1>
                   <p className="text-gray-600 mb-4">Página no encontrada</p>
-                  <a href="/" className="text-blue-600 hover:text-blue-800 underline">
-                    Volver al inicio
-                  </a>
+                  <div className="space-y-2">
+                    <p className="text-sm text-gray-500">URL actual: {window.location.pathname}</p>
+                    <a href="/" className="text-blue-600 hover:text-blue-800 underline">
+                      Volver al inicio
+                    </a>
+                  </div>
                 </div>
               </div>
             } />

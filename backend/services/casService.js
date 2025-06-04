@@ -1,4 +1,4 @@
-// backend/services/casService.js - Servicio para integración CAS
+// backend/services/casService.js - VERSIÓN CORREGIDA
 const axios = require('axios');
 const xml2js = require('xml2js');
 const User = require('../models/User');
@@ -6,37 +6,65 @@ const User = require('../models/User');
 class CASService {
   constructor() {
     this.casBaseUrl = process.env.CAS_BASE_URL || 'https://sso-lib.admin.uc.cl/cas';
-    this.serviceUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    this.backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
+    this.frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     this.casEnabled = process.env.CAS_ENABLED === 'true';
+    
+    console.log('🔧 CAS Service configurado:');
+    console.log(`   - CAS Base URL: ${this.casBaseUrl}`);
+    console.log(`   - Backend URL: ${this.backendUrl}`);
+    console.log(`   - Frontend URL: ${this.frontendUrl}`);
+    console.log(`   - CAS Enabled: ${this.casEnabled}`);
   }
 
-  // Generar URL de login CAS
+  // ✅ CORREGIDO: Service URL siempre apunta al BACKEND callback
+  getServiceUrl(returnUrl = '/dashboard') {
+    return `${this.backendUrl}/api/cas/callback?returnUrl=${encodeURIComponent(returnUrl)}`;
+  }
+
+  // ✅ CORREGIDO: Login URL usa service URL del backend
   getLoginUrl(returnUrl = '/dashboard') {
-    const serviceUrl = `${this.serviceUrl}/auth/cas/callback?returnUrl=${encodeURIComponent(returnUrl)}`;
-    return `${this.casBaseUrl}/login?service=${encodeURIComponent(serviceUrl)}`;
+    const serviceUrl = this.getServiceUrl(returnUrl);
+    const loginUrl = `${this.casBaseUrl}/login?service=${encodeURIComponent(serviceUrl)}`;
+    
+    console.log('🔗 Generando URL de login CAS:');
+    console.log(`   - Return URL: ${returnUrl}`);
+    console.log(`   - Service URL: ${serviceUrl}`);
+    console.log(`   - Login URL: ${loginUrl}`);
+    
+    return loginUrl;
   }
 
   // Generar URL de logout CAS
   getLogoutUrl() {
-    const serviceUrl = `${this.serviceUrl}/login`;
+    const serviceUrl = `${this.frontendUrl}/login`;
     return `${this.casBaseUrl}/logout?service=${encodeURIComponent(serviceUrl)}`;
   }
 
-  // Validar ticket CAS
+  // ✅ Validar ticket CAS con logging mejorado
   async validateTicket(ticket, service) {
     try {
-      console.log('🎫 Validando ticket CAS:', { ticket: ticket.substring(0, 20) + '...', service });
+      console.log('🎫 Validando ticket CAS:');
+      console.log(`   - Ticket: ${ticket.substring(0, 20)}...`);
+      console.log(`   - Service: ${service}`);
       
       const validateUrl = `${this.casBaseUrl}/serviceValidate`;
+      const params = {
+        ticket: ticket,
+        service: service
+      };
+      
+      console.log(`🔄 Llamando a: ${validateUrl}`);
+      console.log(`   - Parámetros:`, params);
+      
       const response = await axios.get(validateUrl, {
-        params: {
-          ticket: ticket,
-          service: service
-        },
+        params: params,
         timeout: 10000
       });
 
-      console.log('📋 Respuesta CAS XML:', response.data);
+      console.log('📡 Status Code:', response.status);
+      console.log('📋 Respuesta CAS XML:');
+      console.log(response.data);
 
       // Parsear respuesta XML
       const parser = new xml2js.Parser();
@@ -67,7 +95,9 @@ class CASService {
           };
         }
 
-        console.log('✅ Validación CAS exitosa:', { username, attributes });
+        console.log('✅ Validación CAS exitosa:');
+        console.log(`   - Username: ${username}`);
+        console.log(`   - Attributes:`, attributes);
 
         return {
           success: true,
@@ -79,7 +109,9 @@ class CASService {
         const code = failure.$.code;
         const message = failure._;
         
-        console.error('❌ Validación CAS falló:', { code, message });
+        console.error('❌ Validación CAS falló:');
+        console.error(`   - Code: ${code}`);
+        console.error(`   - Message: ${message}`);
         
         return {
           success: false,
@@ -94,6 +126,10 @@ class CASService {
       }
     } catch (error) {
       console.error('❌ Error validando ticket CAS:', error);
+      if (error.response) {
+        console.error('   - Status:', error.response.status);
+        console.error('   - Data:', error.response.data);
+      }
       return {
         success: false,
         error: `Error de validación: ${error.message}`
@@ -176,33 +212,36 @@ class CASService {
   // Determinar rol del usuario basado en email o atributos
   determineUserRole(email, attributes) {
     // Lista de emails de administradores
-    const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim());
+    const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(e => e);
+    
+    console.log('🔍 Determinando rol para:', email);
+    console.log('📋 Admin emails configurados:', adminEmails);
     
     // Verificar si está en la lista de admins
     if (adminEmails.includes(email)) {
+      console.log('👨‍💼 Usuario identificado como admin por email');
       return 'admin';
     }
 
     // Verificar por dominio o tipo de usuario
     if (attributes.type) {
       const userType = attributes.type.toLowerCase();
+      console.log('🏷️ Tipo de usuario CAS:', userType);
+      
       if (userType.includes('admin') || userType.includes('staff') || userType.includes('funcionario')) {
+        console.log('👨‍💼 Usuario identificado como admin por tipo');
         return 'admin';
       }
     }
 
     // Por defecto, rol de usuario
+    console.log('👤 Usuario asignado como user por defecto');
     return 'user';
   }
 
   // Verificar si CAS está habilitado
   isEnabled() {
     return this.casEnabled;
-  }
-
-  // Generar service URL para callback
-  getServiceUrl(returnUrl = '/dashboard') {
-    return `${this.serviceUrl}/auth/cas/callback?returnUrl=${encodeURIComponent(returnUrl)}`;
   }
 }
 

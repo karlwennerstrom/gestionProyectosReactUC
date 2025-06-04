@@ -1,9 +1,9 @@
-// frontend/src/pages/Login.jsx - Componente Login actualizado con CAS
+// frontend/src/pages/Login.jsx - SIMPLIFICADO PARA CAS
 import React, { useState, useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { InlineSpinner } from '../components/Common/LoadingSpinner';
-import { casService } from '../services/casService';
+import { api } from '../services/api';
 import toast from 'react-hot-toast';
 
 const Login = () => {
@@ -19,7 +19,7 @@ const Login = () => {
   const { login, isAuthenticated, user, setUser, setToken } = useAuth();
   const location = useLocation();
 
-  // Verificar estado de CAS al cargar
+  // Verificar estado de CAS y manejar callback
   useEffect(() => {
     checkCASStatus();
     handleCASCallback();
@@ -28,84 +28,88 @@ const Login = () => {
   // Verificar si CAS está habilitado
   const checkCASStatus = async () => {
     try {
-      const status = await casService.getStatus();
-      setCasEnabled(status.cas_enabled);
-      console.log('Estado CAS:', status);
+      const response = await api.get('/cas/status');
+      if (response.data.success) {
+        setCasEnabled(response.data.data.cas_enabled);
+        console.log('Estado CAS:', response.data.data);
+      }
     } catch (error) {
       console.error('Error verificando CAS:', error);
       setCasEnabled(false);
     }
   };
 
-  // Manejar callback de CAS
+  // ✅ SIMPLIFICADO: Manejar parámetros CAS desde URL
   const handleCASCallback = async () => {
-    const callback = casService.handleCallback();
-    
-    if (callback.error) {
-      // Mostrar error de CAS
-      let errorMessage = 'Error en autenticación CAS';
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+    const casLogin = urlParams.get('cas_login');
+    const newUser = urlParams.get('new_user');
+    const error = urlParams.get('error');
+    const errorMessage = urlParams.get('message');
+
+    // Limpiar parámetros de la URL
+    if (token || error || casLogin) {
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+    }
+
+    // Manejar errores CAS
+    if (error) {
+      let displayError = 'Error en autenticación CAS';
       
-      switch (callback.error) {
+      switch (error) {
         case 'no_ticket':
-          errorMessage = 'No se recibió ticket de autenticación de CAS';
+          displayError = 'No se recibió ticket de autenticación';
           break;
         case 'cas_validation_failed':
-          errorMessage = `Error validando con CAS: ${callback.errorMessage}`;
+          displayError = `Error validando con CAS: ${errorMessage}`;
           break;
         case 'user_not_authorized':
-          errorMessage = `Usuario no autorizado: ${callback.errorMessage}`;
+          displayError = `Usuario no autorizado: ${errorMessage}`;
           break;
         case 'cas_callback_error':
-          errorMessage = `Error en callback CAS: ${callback.errorMessage}`;
+          displayError = `Error en callback: ${errorMessage}`;
           break;
         default:
-          errorMessage = callback.errorMessage || 'Error desconocido en CAS';
+          displayError = errorMessage || displayError;
       }
       
-      toast.error(errorMessage, { duration: 5000 });
+      toast.error(displayError, { duration: 6000 });
       return;
     }
 
-    if (callback.token && callback.casLogin) {
-      // Procesar token de CAS
-      const success = casService.processCallbackToken(callback.token);
-      
-      if (success) {
-        try {
-          // Verificar token y obtener información del usuario
-          const response = await fetch(`${process.env.REACT_APP_API_URL}/auth/verify`, {
-            headers: {
-              'Authorization': `Bearer ${callback.token}`
-            }
-          });
+    // ✅ Procesar token CAS exitoso
+    if (token && casLogin === 'true') {
+      try {
+        // Configurar token en localStorage y axios
+        localStorage.setItem('token', token);
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        
+        // Verificar token y obtener datos del usuario
+        const response = await api.get('/auth/verify');
+        
+        if (response.data.success) {
+          setUser(response.data.data.user);
+          setToken(token);
           
-          if (response.ok) {
-            const data = await response.json();
-            setUser(data.data.user);
-            setToken(callback.token);
-            
-            // Mostrar mensaje de bienvenida
-            const welcomeMessage = callback.newUser 
-              ? `¡Bienvenido al sistema! Usuario creado automáticamente: ${data.data.user.full_name}`
-              : `¡Bienvenido, ${data.data.user.full_name}!`;
-            
-            toast.success(welcomeMessage);
-          }
-        } catch (error) {
-          console.error('Error verificando token CAS:', error);
-          toast.error('Error procesando autenticación CAS');
+          // Mostrar mensaje de bienvenida
+          const welcomeMessage = newUser === 'true' 
+            ? `¡Bienvenido al sistema! Usuario creado: ${response.data.data.user.full_name}`
+            : `¡Bienvenido, ${response.data.data.user.full_name}!`;
+          
+          toast.success(welcomeMessage);
+          
+          console.log('✅ Login CAS exitoso:', response.data.data.user);
         }
+      } catch (error) {
+        console.error('Error verificando token CAS:', error);
+        toast.error('Error procesando autenticación CAS');
+        localStorage.removeItem('token');
+        delete api.defaults.headers.common['Authorization'];
       }
     }
   };
-
-  // Redirigir si ya está autenticado
-  useEffect(() => {
-    if (isAuthenticated()) {
-      const redirectTo = user?.role === 'admin' ? '/admin' : '/dashboard';
-      toast.success(`¡Bienvenido, ${user?.full_name}!`);
-    }
-  }, [isAuthenticated, user]);
 
   // Si ya está autenticado, redirigir
   if (isAuthenticated()) {
@@ -148,17 +152,21 @@ const Login = () => {
     }
   };
 
+  // ✅ SIMPLIFICADO: Solo redirigir al backend
   const handleCASLogin = async () => {
     setCasLoading(true);
     try {
-      const currentPath = location.pathname;
       const returnUrl = location.state?.from?.pathname || '/dashboard';
       
-      await casService.startLogin(returnUrl);
+      // ← REDIRIGIR DIRECTAMENTE AL BACKEND CAS LOGIN
+      const casLoginUrl = `${process.env.REACT_APP_API_URL}/cas/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+      
+      console.log('🔗 Redirigiendo a CAS via backend:', casLoginUrl);
+      window.location.href = casLoginUrl;
+      
     } catch (error) {
       console.error('Error iniciando login CAS:', error);
       toast.error('Error iniciando autenticación CAS');
-    } finally {
       setCasLoading(false);
     }
   };
@@ -204,7 +212,7 @@ const Login = () => {
             <div className="mb-6">
               <button
                 onClick={handleCASLogin}
-                disabled={casLoading}
+                disabled={casLoading || loading}
                 className="group relative w-full flex justify-center py-3 px-4 border border-blue-300 text-sm font-medium rounded-md text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {casLoading ? (
@@ -246,7 +254,7 @@ const Login = () => {
                 onChange={handleInputChange}
                 className="appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 placeholder="Ingresa tu usuario"
-                disabled={loading}
+                disabled={loading || casLoading}
               />
             </div>
 
@@ -266,13 +274,13 @@ const Login = () => {
                   onChange={handleInputChange}
                   className="appearance-none relative block w-full px-3 py-2 pr-10 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                   placeholder="Ingresa tu contraseña"
-                  disabled={loading}
+                  disabled={loading || casLoading}
                 />
                 <button
                   type="button"
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
                   onClick={() => setShowPassword(!showPassword)}
-                  disabled={loading}
+                  disabled={loading || casLoading}
                 >
                   {showPassword ? (
                     <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -292,7 +300,7 @@ const Login = () => {
             <div>
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || casLoading}
                 className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {loading ? (
@@ -320,7 +328,7 @@ const Login = () => {
               <button
                 type="button"
                 onClick={() => fillDemoCredentials('admin')}
-                disabled={loading}
+                disabled={loading || casLoading}
                 className="w-full py-2 px-3 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
               >
                 👨‍💼 Admin
@@ -328,7 +336,7 @@ const Login = () => {
               <button
                 type="button"
                 onClick={() => fillDemoCredentials('user')}
-                disabled={loading}
+                disabled={loading || casLoading}
                 className="w-full py-2 px-3 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
               >
                 👤 Usuario
