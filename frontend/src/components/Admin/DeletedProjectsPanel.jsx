@@ -35,7 +35,7 @@ const DeletedProjectsPanel = ({ onClose }) => {
 
   const handleRestore = async (project) => {
     try {
-      const response = await api.put(`/projects/${project.id}/restore`);
+      const response = await api.post(`/projects/${project.id}/restore`);
       if (response.data.success) {
         toast.success(`Proyecto ${project.code} restaurado exitosamente`);
         setShowRestoreModal(false);

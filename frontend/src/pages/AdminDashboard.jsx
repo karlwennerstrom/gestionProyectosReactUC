@@ -1,4 +1,4 @@
-// frontend/src/pages/AdminDashboard.jsx - VERSIÓN COMPLETA CON MODAL
+// frontend/src/pages/AdminDashboard.jsx - IMPORTS CORREGIDOS
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { projectService, documentService, api, fileUtils } from '../services/api';
@@ -9,10 +9,9 @@ import ProjectDetailsView from '../components/Admin/ProjectDetailsView';
 import NotificationSettings from '../components/Admin/NotificationSettings';
 import { stageRequirements } from '../config/stageRequirements';
 import AIChatbot from '../components/Common/AIChatbot';
-import StageManagementPanel from '../Admin/StageManagementPanel';
-import DeletedProjectsPanel from '../Admin/DeletedProjectsPanel';
-
-
+// ✅ IMPORTS CORREGIDOS - Usar ruta completa desde components
+import StageManagementPanel from '../components/Admin/StageManagementPanel';
+import DeletedProjectsPanel from '../components/Admin/DeletedProjectsPanel';
 import toast from 'react-hot-toast';
 
 const AdminDashboard = () => {
@@ -36,11 +35,14 @@ const AdminDashboard = () => {
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [showChatbot, setShowChatbot] = useState(false);
 
+  // ✅ ESTADOS PARA LOS NUEVOS MODALES
   const [showStageManagement, setShowStageManagement] = useState(false);
-const [showDeletedProjects, setShowDeletedProjects] = useState(false);
+  const [showDeletedProjects, setShowDeletedProjects] = useState(false);
 
-  
-
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+const [selectedProjectToDelete, setSelectedProjectToDelete] = useState(null);
+const [deleteReason, setDeleteReason] = useState('');
+const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -65,6 +67,36 @@ const [showDeletedProjects, setShowDeletedProjects] = useState(false);
       setLoading(false);
     }
   };
+  const handleDeleteProject = (project) => {
+  setSelectedProjectToDelete(project);
+  setDeleteReason('');
+  setShowDeleteModal(true);
+};
+const executeDeleteProject = async () => {
+  if (!selectedProjectToDelete) return;
+
+  try {
+    setDeleting(true);
+    
+    const response = await api.delete(`/projects/${selectedProjectToDelete.id}`, {
+      data: { reason: deleteReason.trim() || 'Eliminado por administrador' }
+    });
+
+    if (response.data.success) {
+      toast.success(`Proyecto ${selectedProjectToDelete.code} eliminado exitosamente`);
+      setShowDeleteModal(false);
+      setSelectedProjectToDelete(null);
+      setDeleteReason('');
+      // Recargar datos
+      await loadData();
+    }
+  } catch (error) {
+    console.error('Error eliminando proyecto:', error);
+    toast.error(error.response?.data?.message || 'Error al eliminar proyecto');
+  } finally {
+    setDeleting(false);
+  }
+};
 
   // Cargar requerimientos de un proyecto específico
   const loadProjectRequirements = async (projectId) => {
@@ -335,7 +367,7 @@ const [showDeletedProjects, setShowDeletedProjects] = useState(false);
             </div>
             
             <div className="flex items-center space-x-4">
-              <button
+              {/* <button
                 onClick={() => setShowNotificationSettings(true)}
                 className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2"
                 title="Configurar notificaciones por email"
@@ -344,43 +376,46 @@ const [showDeletedProjects, setShowDeletedProjects] = useState(false);
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                 </svg>
                 Notificaciones
+              </button> */}
+              
+              <button
+                onClick={() => setShowChatbot(!showChatbot)}
+                className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${
+                  showChatbot 
+                    ? 'bg-green-600 hover:bg-green-700 text-white' 
+                    : 'bg-purple-600 hover:bg-purple-700 text-white'
+                }`}
+                title="Asistente IA"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-4l-4 4-4-4z" />
+                </svg>
+                {showChatbot ? 'Cerrar Chat' : 'Asistente IA'}
               </button>
-            <button
-  onClick={() => setShowChatbot(!showChatbot)}
-  className={`px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${
-    showChatbot 
-      ? 'bg-green-600 hover:bg-green-700 text-white' 
-      : 'bg-purple-600 hover:bg-purple-700 text-white'
-  }`}
-  title="Asistente IA"
->
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-4l-4 4-4-4z" />
-  </svg>
-  {showChatbot ? 'Cerrar Chat' : 'Asistente IA'}
-</button>
-<button
-  onClick={() => setShowStageManagement(true)}
-  className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2"
-  title="Gestionar etapas y requerimientos"
->
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-  </svg>
-  Gestionar Etapas
-</button>
+              
+              <button
+                onClick={() => setShowStageManagement(true)}
+                className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2"
+                title="Gestionar etapas y requerimientos"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Gestionar Etapas
+              </button>
 
-<button
-  onClick={() => setShowDeletedProjects(true)}
-  className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2"
-  title="Ver proyectos eliminados"
->
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-  </svg>
-  Proyectos Eliminados
-</button>
+              <button
+                onClick={() => setShowDeletedProjects(true)}
+                className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2"
+                title="Ver proyectos eliminados"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Proyectos Eliminados
+              </button>
+              
               <div className="text-right">
                 <p className="text-sm font-medium text-gray-900">{user?.full_name}</p>
                 <p className="text-xs text-gray-500">{user?.role === 'admin' ? 'Administrador' : 'Usuario'}</p>
@@ -396,7 +431,7 @@ const [showDeletedProjects, setShowDeletedProjects] = useState(false);
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-9xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Estadísticas */}
         {stats && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
@@ -548,6 +583,13 @@ const [showDeletedProjects, setShowDeletedProjects] = useState(false);
                             >
                               👁️ Detalles
                             </button>
+                            <button
+                                onClick={() => handleDeleteProject(project)}
+                                className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded-md text-sm transition-colors"
+                                title="Eliminar proyecto"
+                              >
+                                🗑️ Eliminar
+                              </button>
                           </div>
                         </td>
                       </tr>
@@ -793,25 +835,98 @@ const [showDeletedProjects, setShowDeletedProjects] = useState(false);
           </div>
         </div>
       )}
-      {/* Modal de Gestión de Etapas */}
-{showStageManagement && (
-  <StageManagementPanel
-    onClose={() => setShowStageManagement(false)}
-  />
-)}
 
-{/* Modal de Proyectos Eliminados */}
-{showDeletedProjects && (
-  <DeletedProjectsPanel
-    onClose={() => setShowDeletedProjects(false)}
-  />
-)}
-<AIChatbot 
-      isMinimized={!showChatbot}
-      onToggle={setShowChatbot}
-    />
+      {/* ✅ MODALES NUEVOS CON RUTAS CORRECTAS */}
+      {showDeleteModal && selectedProjectToDelete && (
+  <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-[60] p-4">
+    <div className="bg-white rounded-lg max-w-md w-full">
+      <div className="bg-red-600 text-white p-4 rounded-t-lg">
+        <h3 className="text-lg font-medium flex items-center gap-2">
+          🗑️ Eliminar Proyecto
+        </h3>
+      </div>
+      
+      <div className="p-6">
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <div className="text-sm text-red-800">
+            <p><strong>Proyecto:</strong> {selectedProjectToDelete.code}</p>
+            <p><strong>Título:</strong> {selectedProjectToDelete.title}</p>
+            <p><strong>Usuario:</strong> {selectedProjectToDelete.user_name}</p>
+          </div>
+        </div>
+
+        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <div className="flex items-start">
+            <svg className="w-5 h-5 text-yellow-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+            <div className="text-sm text-yellow-800">
+              <p className="font-medium">Eliminación Lógica</p>
+              <p>El proyecto será marcado como eliminado pero puede ser restaurado posteriormente.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Motivo de eliminación (opcional)
+          </label>
+          <textarea
+            value={deleteReason}
+            onChange={(e) => setDeleteReason(e.target.value)}
+            rows="3"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-red-500 focus:border-red-500"
+            placeholder="Ej: Proyecto duplicado, cancelado por el cliente, etc."
+          />
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowDeleteModal(false)}
+            disabled={deleting}
+            className="flex-1 px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={executeDeleteProject}
+            disabled={deleting}
+            className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-50 flex items-center justify-center"
+          >
+            {deleting ? (
+              <>
+                <InlineSpinner size="small" />
+                <span className="ml-2">Eliminando...</span>
+              </>
+            ) : (
+              '🗑️ Eliminar Proyecto'
+            )}
+          </button>
+        </div>
+      </div>
     </div>
-    
+  </div>
+)}
+      {/* Modal de Gestión de Etapas */}
+      {showStageManagement && (
+        <StageManagementPanel
+          onClose={() => setShowStageManagement(false)}
+        />
+      )}
+
+      {/* Modal de Proyectos Eliminados */}
+      {showDeletedProjects && (
+        <DeletedProjectsPanel
+          onClose={() => setShowDeletedProjects(false)}
+        />
+      )}
+
+      {/* Chatbot */}
+      <AIChatbot 
+        isMinimized={!showChatbot}
+        onToggle={setShowChatbot}
+      />
+    </div>
   );
 };
 

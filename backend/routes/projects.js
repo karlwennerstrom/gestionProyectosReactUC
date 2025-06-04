@@ -1,4 +1,4 @@
-// backend/routes/projects.js - VERSIÓN LIMPIA QUE FUNCIONA
+// backend/routes/projects.js - VERSIÓN CORREGIDA CON ROUTING ORDENADO
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const projectController = require('../controllers/projectController');
@@ -73,7 +73,7 @@ const deleteValidation = [
 ];
 
 // ══════════════════════════════════════════════════════════
-// RUTAS PÚBLICAS
+// RUTAS PÚBLICAS (sin autenticación)
 // ══════════════════════════════════════════════════════════
 
 router.get('/health', (req, res) => {
@@ -97,8 +97,8 @@ router.get('/health', (req, res) => {
       ],
       admin: [
         'GET /api/projects',
-        'GET /api/projects/deleted',
         'GET /api/projects/stats',
+        'GET /api/projects/deleted',
         'PUT /api/projects/:id/status',
         'PUT /api/projects/:id/stage',
         'DELETE /api/projects/:id',
@@ -111,38 +111,10 @@ router.get('/health', (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════
-// RUTAS PROTEGIDAS - USUARIOS
+// RUTAS PROTEGIDAS - ESPECÍFICAS PRIMERO (para evitar conflictos)
 // ══════════════════════════════════════════════════════════
 
-// GET /api/projects/my - Obtener proyectos del usuario autenticado
-router.get('/my', 
-  authenticateToken,
-  logAuthenticatedRequest,
-  projectController.getMyProjects
-);
-
-// POST /api/projects - Crear nuevo proyecto
-router.post('/', 
-  authenticateToken,
-  createProjectValidation,
-  handleValidationErrors,
-  logAuthenticatedRequest,
-  projectController.createProject
-);
-
-// GET /api/projects/:id - Obtener proyecto específico
-router.get('/:id', 
-  authenticateToken,
-  param('id').isInt().withMessage('ID debe ser un número'),
-  query('include_deleted').optional().isBoolean().withMessage('include_deleted debe ser boolean'),
-  handleValidationErrors,
-  logAuthenticatedRequest,
-  projectController.getProjectById
-);
-
-// ══════════════════════════════════════════════════════════
-// RUTAS PROTEGIDAS - SOLO ADMIN
-// ══════════════════════════════════════════════════════════
+// ← IMPORTANTES: ESTAS RUTAS DEBEN IR ANTES DE /:id
 
 // GET /api/projects/stats - Estadísticas (solo admin)
 router.get('/stats', 
@@ -162,6 +134,27 @@ router.get('/deleted',
   projectController.getDeletedProjects
 );
 
+// GET /api/projects/my - Obtener proyectos del usuario autenticado
+router.get('/my', 
+  authenticateToken,
+  logAuthenticatedRequest,
+  projectController.getMyProjects
+);
+
+// POST /api/projects/test-email - Test de email (solo admin)
+router.post('/test-email', 
+  authenticateToken,
+  requireAdmin,
+  body('email').isEmail().withMessage('Email válido requerido'),
+  handleValidationErrors,
+  logAuthenticatedRequest,
+  projectController.testEmail
+);
+
+// ══════════════════════════════════════════════════════════
+// RUTAS GENERALES (después de las específicas)
+// ══════════════════════════════════════════════════════════
+
 // GET /api/projects - Obtener todos los proyectos (admin) o proyectos del usuario
 router.get('/', 
   authenticateToken,
@@ -170,6 +163,29 @@ router.get('/',
   handleValidationErrors,
   logAuthenticatedRequest,
   projectController.getProjects
+);
+
+// POST /api/projects - Crear nuevo proyecto
+router.post('/', 
+  authenticateToken,
+  createProjectValidation,
+  handleValidationErrors,
+  logAuthenticatedRequest,
+  projectController.createProject
+);
+
+// ══════════════════════════════════════════════════════════
+// RUTAS CON PARÁMETROS /:id (al final para evitar conflictos)
+// ══════════════════════════════════════════════════════════
+
+// GET /api/projects/:id - Obtener proyecto específico
+router.get('/:id', 
+  authenticateToken,
+  param('id').isInt().withMessage('ID debe ser un número'),
+  query('include_deleted').optional().isBoolean().withMessage('include_deleted debe ser boolean'),
+  handleValidationErrors,
+  logAuthenticatedRequest,
+  projectController.getProjectById
 );
 
 // PUT /api/projects/:id/status - Actualizar estado del proyecto (solo admin)
@@ -192,16 +208,6 @@ router.put('/:id/stage',
   projectController.updateProjectStage
 );
 
-// DELETE /api/projects/:id - Eliminación lógica (solo admin)
-router.delete('/:id', 
-  authenticateToken,
-  requireAdmin,
-  deleteValidation,
-  handleValidationErrors,
-  logAuthenticatedRequest,
-  projectController.deleteProject
-);
-
 // POST /api/projects/:id/restore - Restaurar proyecto (solo admin)
 router.post('/:id/restore', 
   authenticateToken,
@@ -210,6 +216,16 @@ router.post('/:id/restore',
   handleValidationErrors,
   logAuthenticatedRequest,
   projectController.restoreProject
+);
+
+// DELETE /api/projects/:id - Eliminación lógica (solo admin)
+router.delete('/:id', 
+  authenticateToken,
+  requireAdmin,
+  deleteValidation,
+  handleValidationErrors,
+  logAuthenticatedRequest,
+  projectController.deleteProject
 );
 
 // DELETE /api/projects/:id/permanent - Eliminación permanente (solo admin)
@@ -221,16 +237,6 @@ router.delete('/:id/permanent',
   handleValidationErrors,
   logAuthenticatedRequest,
   projectController.permanentDeleteProject
-);
-
-// POST /api/projects/test-email - Test de email (solo admin)
-router.post('/test-email', 
-  authenticateToken,
-  requireAdmin,
-  body('email').isEmail().withMessage('Email válido requerido'),
-  handleValidationErrors,
-  logAuthenticatedRequest,
-  projectController.testEmail
 );
 
 module.exports = router;
