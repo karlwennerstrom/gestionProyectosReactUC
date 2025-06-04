@@ -1,3 +1,4 @@
+// backend/controllers/projectController.js - CON ELIMINACIÓN LÓGICA
 const Project = require('../models/Project');
 const User = require('../models/User');
 const emailService = require('../services/emailService');
@@ -8,17 +9,14 @@ const getProjects = async (req, res) => {
     const { status, current_stage } = req.query;
     const filters = {};
 
-    // Agregar filtros si están presentes
     if (status) filters.status = status;
     if (current_stage) filters.current_stage = current_stage;
 
     let projects;
 
     if (req.user.role === 'admin') {
-      // Admin puede ver todos los proyectos
       projects = await Project.getAll(filters);
     } else {
-      // Usuario solo ve sus proyectos
       filters.user_id = req.user.id;
       projects = await Project.getAll(filters);
     }
@@ -41,11 +39,42 @@ const getProjects = async (req, res) => {
   }
 };
 
+// ← NUEVO: Obtener proyectos eliminados (solo admin)
+const getDeletedProjects = async (req, res) => {
+  try {
+    const { deleted_by } = req.query;
+    const filters = {};
+
+    if (deleted_by) filters.deleted_by = deleted_by;
+
+    const deletedProjects = await Project.getDeleted(filters);
+    const deletionStats = await Project.getDeletionStats();
+
+    res.json({
+      success: true,
+      data: {
+        projects: deletedProjects,
+        total: deletedProjects.length,
+        stats: deletionStats
+      }
+    });
+
+  } catch (error) {
+    console.error('Error obteniendo proyectos eliminados:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+};
+
 // Obtener proyecto por ID
 const getProjectById = async (req, res) => {
   try {
     const { id } = req.params;
-    const project = await Project.findById(id);
+    const { include_deleted } = req.query;
+    
+    const project = await Project.findById(id, include_deleted === 'true');
 
     if (!project) {
       return res.status(404).json({
@@ -54,7 +83,7 @@ const getProjectById = async (req, res) => {
       });
     }
 
-    // Verificar permisos: admin puede ver todo, usuario solo sus proyectos
+    // Verificar permisos
     if (req.user.role !== 'admin' && project.user_id !== req.user.id) {
       return res.status(403).json({
         success: false,
@@ -81,7 +110,6 @@ const createProject = async (req, res) => {
   try {
     const { title, description } = req.body;
 
-    // Validar campos requeridos
     if (!title || !description) {
       return res.status(400).json({
         success: false,
@@ -89,7 +117,6 @@ const createProject = async (req, res) => {
       });
     }
 
-    // Crear proyecto
     const project = await Project.create({
       title: title.trim(),
       description: description.trim(),
@@ -117,7 +144,6 @@ const updateProjectStatus = async (req, res) => {
     const { id } = req.params;
     const { status, admin_comments } = req.body;
 
-    // Validar estado
     const validStatuses = ['pending', 'in-progress', 'approved', 'rejected'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
@@ -126,7 +152,6 @@ const updateProjectStatus = async (req, res) => {
       });
     }
 
-    // Verificar que el proyecto existe
     const existingProject = await Project.findById(id);
     if (!existingProject) {
       return res.status(404).json({
@@ -135,7 +160,6 @@ const updateProjectStatus = async (req, res) => {
       });
     }
 
-    // Actualizar estado
     const project = await Project.updateStatus(id, status, admin_comments);
 
     res.json({
@@ -153,13 +177,12 @@ const updateProjectStatus = async (req, res) => {
   }
 };
 
-// Actualizar etapa específica del proyecto (solo admin) - CON NOTIFICACIONES
+// Actualizar etapa específica del proyecto (solo admin)
 const updateProjectStage = async (req, res) => {
   try {
     const { id } = req.params;
     const { stage_name, status, admin_comments } = req.body;
 
-    // Validar etapa
     const validStages = ['formalization', 'design', 'delivery', 'operation', 'maintenance'];
     if (!validStages.includes(stage_name)) {
       return res.status(400).json({
@@ -168,7 +191,6 @@ const updateProjectStage = async (req, res) => {
       });
     }
 
-    // Validar estado de etapa
     const validStageStatuses = ['pending', 'in-progress', 'completed', 'rejected'];
     if (!validStageStatuses.includes(status)) {
       return res.status(400).json({
@@ -177,7 +199,6 @@ const updateProjectStage = async (req, res) => {
       });
     }
 
-    // Obtener proyecto y usuario antes de actualizar
     const project = await Project.findById(id);
     if (!project) {
       return res.status(404).json({
@@ -186,20 +207,14 @@ const updateProjectStage = async (req, res) => {
       });
     }
 
-    // Obtener datos del usuario para el email
     const projectOwner = await User.findById(project.user_id);
-    if (!projectOwner) {
-      console.warn(`Usuario no encontrado para proyecto ${id}`);
-    }
 
-    // Actualizar etapa
     const stages = await Project.updateStage(id, stage_name, status, admin_comments);
 
-    // 📧 ENVIAR NOTIFICACIÓN POR EMAIL
+    // ← NOTIFICACIONES MEJORADAS POR EMAIL
     if (projectOwner && projectOwner.email) {
       try {
         if (status === 'completed') {
-          // Etapa aprobada
           await emailService.notifyStageApproved(
             projectOwner.email,
             projectOwner.full_name,
@@ -208,9 +223,8 @@ const updateProjectStage = async (req, res) => {
             stage_name,
             admin_comments || `Etapa ${stage_name} aprobada exitosamente`
           );
-          console.log(`✅ Email de aprobación enviado a ${projectOwner.email}`);
+          console.log(`✅ Email de aprobación de etapa enviado a ${projectOwner.email}`);
         } else if (status === 'rejected') {
-          // Etapa rechazada
           await emailService.notifyStageRejected(
             projectOwner.email,
             projectOwner.full_name,
@@ -219,11 +233,21 @@ const updateProjectStage = async (req, res) => {
             stage_name,
             admin_comments || 'La etapa requiere correcciones'
           );
-          console.log(`📧 Email de rechazo enviado a ${projectOwner.email}`);
+          console.log(`📧 Email de rechazo de etapa enviado a ${projectOwner.email}`);
+        } else if (status === 'in-progress') {
+          // Nueva notificación para revisión
+          await emailService.notifyStageInReview(
+            projectOwner.email,
+            projectOwner.full_name,
+            project.code,
+            project.title,
+            stage_name,
+            admin_comments || 'Etapa en proceso de revisión'
+          );
+          console.log(`🔄 Email de revisión de etapa enviado a ${projectOwner.email}`);
         }
       } catch (emailError) {
-        console.error('❌ Error enviando notificación por email:', emailError);
-        // No fallar la operación por error de email
+        console.error('❌ Error enviando notificación de etapa por email:', emailError);
       }
     }
 
@@ -242,47 +266,20 @@ const updateProjectStage = async (req, res) => {
   }
 };
 
-// Mover proyecto a siguiente etapa (solo admin) - OBSOLETO
-const moveToNextStage = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { admin_comments } = req.body;
-
-    // Verificar que el proyecto existe
-    const existingProject = await Project.findById(id);
-    if (!existingProject) {
-      return res.status(404).json({
-        success: false,
-        message: 'Proyecto no encontrado'
-      });
-    }
-
-    // Mover a siguiente etapa
-    const project = await Project.moveToNextStage(id, admin_comments);
-
-    res.json({
-      success: true,
-      message: 'Proyecto movido a la siguiente etapa exitosamente',
-      data: { project }
-    });
-
-  } catch (error) {
-    console.error('Error moviendo proyecto a siguiente etapa:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error interno del servidor'
-    });
-  }
-};
-
 // Obtener estadísticas de proyectos (solo admin)
 const getProjectStats = async (req, res) => {
   try {
     const stats = await Project.getStats();
+    const deletionStats = await Project.getDeletionStats();
 
     res.json({
       success: true,
-      data: { stats }
+      data: { 
+        stats: {
+          ...stats,
+          deletion: deletionStats
+        }
+      }
     });
 
   } catch (error) {
@@ -300,7 +297,6 @@ const getMyProjects = async (req, res) => {
     const { status, current_stage } = req.query;
     const filters = { user_id: req.user.id };
 
-    // Agregar filtros si están presentes
     if (status) filters.status = status;
     if (current_stage) filters.current_stage = current_stage;
 
@@ -327,12 +323,12 @@ const getMyProjects = async (req, res) => {
   }
 };
 
-// Eliminar proyecto (solo admin o propietario)
+// ← MODIFICADO: Eliminación lógica en lugar de física
 const deleteProject = async (req, res) => {
   try {
     const { id } = req.params;
+    const { reason } = req.body; // Motivo opcional de eliminación
 
-    // Verificar que el proyecto existe
     const existingProject = await Project.findById(id);
     if (!existingProject) {
       return res.status(404).json({
@@ -341,16 +337,16 @@ const deleteProject = async (req, res) => {
       });
     }
 
-    // Verificar permisos: admin puede eliminar cualquiera, usuario solo sus proyectos
-    if (req.user.role !== 'admin' && existingProject.user_id !== req.user.id) {
+    // Verificar permisos: solo admin puede eliminar
+    if (req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
-        message: 'No tienes permisos para eliminar este proyecto'
+        message: 'Solo los administradores pueden eliminar proyectos'
       });
     }
 
-    // Eliminar proyecto
-    const deleted = await Project.delete(id);
+    // Realizar eliminación lógica
+    const deleted = await Project.softDelete(id, req.user.id, reason);
 
     if (!deleted) {
       return res.status(500).json({
@@ -361,7 +357,14 @@ const deleteProject = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Proyecto eliminado exitosamente'
+      message: 'Proyecto eliminado exitosamente',
+      data: {
+        project_id: id,
+        project_code: existingProject.code,
+        deleted_by: req.user.full_name,
+        deletion_reason: reason,
+        deleted_at: new Date().toISOString()
+      }
     });
 
   } catch (error) {
@@ -373,7 +376,98 @@ const deleteProject = async (req, res) => {
   }
 };
 
-// 🧪 ENDPOINT DE PRUEBA PARA EMAILS
+// ← NUEVO: Restaurar proyecto eliminado (solo admin)
+const restoreProject = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const project = await Project.restore(id, req.user.id);
+
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: 'Proyecto no encontrado o no está eliminado'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Proyecto restaurado exitosamente',
+      data: { 
+        project,
+        restored_by: req.user.full_name,
+        restored_at: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Error restaurando proyecto:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Error interno del servidor'
+    });
+  }
+};
+
+// ← NUEVO: Eliminación física permanente (solo para casos extremos)
+const permanentDeleteProject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { confirm } = req.body;
+
+    if (confirm !== 'ELIMINAR_PERMANENTE') {
+      return res.status(400).json({
+        success: false,
+        message: 'Confirmación requerida. Envía confirm: "ELIMINAR_PERMANENTE"'
+      });
+    }
+
+    const existingProject = await Project.findById(id, true); // incluir eliminados
+    if (!existingProject) {
+      return res.status(404).json({
+        success: false,
+        message: 'Proyecto no encontrado'
+      });
+    }
+
+    if (!existingProject.deleted_at) {
+      return res.status(400).json({
+        success: false,
+        message: 'El proyecto debe estar eliminado lógicamente antes de la eliminación permanente'
+      });
+    }
+
+    const deleted = await Project.hardDelete(id);
+
+    if (!deleted) {
+      return res.status(500).json({
+        success: false,
+        message: 'Error eliminando el proyecto permanentemente'
+      });
+    }
+
+    console.log(`⚠️ Proyecto ${existingProject.code} eliminado PERMANENTEMENTE por ${req.user.full_name}`);
+
+    res.json({
+      success: true,
+      message: 'Proyecto eliminado permanentemente',
+      data: {
+        project_code: existingProject.code,
+        permanently_deleted_by: req.user.full_name,
+        warning: 'Esta acción no se puede deshacer'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error eliminando proyecto permanentemente:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error interno del servidor'
+    });
+  }
+};
+
+// Test de email (mantenido)
 const testEmail = async (req, res) => {
   try {
     const { email } = req.body;
@@ -385,7 +479,6 @@ const testEmail = async (req, res) => {
       });
     }
 
-    // Verificar conexión SMTP
     const isConnected = await emailService.verifyConnection();
     if (!isConnected) {
       return res.status(500).json({
@@ -394,7 +487,6 @@ const testEmail = async (req, res) => {
       });
     }
 
-    // Enviar email de prueba
     const result = await emailService.sendTestEmail(email, req.user.full_name);
 
     if (result.success) {
@@ -422,13 +514,15 @@ const testEmail = async (req, res) => {
 
 module.exports = {
   getProjects,
+  getDeletedProjects, // ← NUEVO
   getProjectById,
   createProject,
   updateProjectStatus,
   updateProjectStage,
-  moveToNextStage,
   getProjectStats,
   getMyProjects,
-  deleteProject,
+  deleteProject, // Ahora es eliminación lógica
+  restoreProject, // ← NUEVO
+  permanentDeleteProject, // ← NUEVO
   testEmail
 };

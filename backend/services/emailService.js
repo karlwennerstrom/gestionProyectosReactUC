@@ -526,6 +526,116 @@ class EmailService {
 
     return await this.sendEmail(mailOptions);
   }
+   async notifyProjectDeleted(userEmail, userName, projectCode, projectTitle, deletedByName, reason) {
+    const content = `
+      <h2>🗑️ Proyecto Eliminado</h2>
+      <p>Hola <strong>${userName}</strong>,</p>
+      <p>Te informamos que tu proyecto ha sido <span class="status-rejected">eliminado</span> del sistema.</p>
+      
+      <div style="background-color: #fef2f2; border: 1px solid #fecaca; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <h3 style="color: #dc2626; margin-top: 0;">📋 Detalles del Proyecto Eliminado</h3>
+        <p><strong>Código:</strong> ${projectCode}</p>
+        <p><strong>Título:</strong> ${projectTitle}</p>
+        <p><strong>Eliminado por:</strong> ${deletedByName}</p>
+        <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-CL')}</p>
+        ${reason ? `<p><strong>Motivo:</strong> ${reason}</p>` : ''}
+      </div>
+
+      <p>📞 Si consideras que esto es un error o necesitas más información, contacta al administrador del sistema.</p>
+      
+      <div style="background-color: #fffbeb; border: 1px solid #fcd34d; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 0; color: #92400e;"><strong>Nota:</strong> Los proyectos eliminados pueden ser restaurados por un administrador si es necesario.</p>
+      </div>
+    `;
+
+    const mailOptions = {
+      from: this.getFromAddress(),
+      to: userEmail,
+      subject: `🗑️ Proyecto Eliminado: ${projectCode}`,
+      html: this.getBaseTemplate(content, 'Proyecto Eliminado')
+    };
+
+    return await this.sendEmail(mailOptions);
+  }
+   async notifyProjectRestored(userEmail, userName, projectCode, projectTitle, restoredByName) {
+    const content = `
+      <h2>🔄 Proyecto Restaurado</h2>
+      <p>Hola <strong>${userName}</strong>,</p>
+      <p>Te informamos que tu proyecto ha sido <span class="status-approved">restaurado</span> exitosamente.</p>
+      
+      <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <h3 style="color: #166534; margin-top: 0;">📋 Proyecto Restaurado</h3>
+        <p><strong>Código:</strong> ${projectCode}</p>
+        <p><strong>Título:</strong> ${projectTitle}</p>
+        <p><strong>Restaurado por:</strong> ${restoredByName}</p>
+        <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-CL')}</p>
+      </div>
+
+      <p>✅ Tu proyecto está nuevamente activo y puedes continuar trabajando en él normalmente.</p>
+
+      <p style="text-align: center;">
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard" class="button">
+          Ver Proyecto Restaurado
+        </a>
+      </p>
+    `;
+
+    const mailOptions = {
+      from: this.getFromAddress(),
+      to: userEmail,
+      subject: `🔄 Proyecto Restaurado: ${projectCode}`,
+      html: this.getBaseTemplate(content, 'Proyecto Restaurado')
+    };
+
+    return await this.sendEmail(mailOptions);
+  }
+  async notifyDocumentUploadedForRequirement(adminEmail, adminName, userEmail, userName, projectCode, projectTitle, stageName, requirementName, fileName) {
+    const stageNames = {
+      'formalization': 'Formalización',
+      'design': 'Diseño y Validación',
+      'delivery': 'Entrega y Configuración',
+      'operation': 'Aceptación Operacional',
+      'maintenance': 'Operación y Mantenimiento'
+    };
+
+    const isCorrection = requirementName.includes('CORREGIDO');
+
+    const content = `
+      <h2>${isCorrection ? '📝 Corrección' : '📄 Nuevo Documento'} Para Revisión</h2>
+      <p>Hola <strong>${adminName}</strong>,</p>
+      <p>Se ha subido ${isCorrection ? 'una corrección' : 'un nuevo documento'} que requiere tu revisión.</p>
+      
+      <div style="background-color: ${isCorrection ? '#fff7ed' : '#eff6ff'}; border: 1px solid ${isCorrection ? '#fed7aa' : '#bfdbfe'}; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <h3 style="color: ${isCorrection ? '#ea580c' : '#1d4ed8'}; margin-top: 0;">
+          ${isCorrection ? '📝 Corrección de Documento' : '📋 Nuevo Documento'}
+        </h3>
+        <p><strong>Usuario:</strong> ${userName} (${userEmail})</p>
+        <p><strong>Proyecto:</strong> ${projectCode} - ${projectTitle}</p>
+        <p><strong>Etapa:</strong> ${stageNames[stageName] || stageName}</p>
+        <p><strong>Requerimiento:</strong> ${requirementName}</p>
+        <p><strong>Archivo:</strong> ${fileName}</p>
+        <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-CL')}</p>
+        ${isCorrection ? '<p><strong>Tipo:</strong> Documento corregido tras rechazo previo</p>' : ''}
+      </div>
+
+      ${isCorrection ? '<p>🔄 <strong>Prioridad Alta:</strong> Esta es una corrección de un documento previamente rechazado.</p>' : ''}
+
+      <p style="text-align: center;">
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/admin" class="button">
+          ${isCorrection ? 'Revisar Corrección' : 'Revisar Documento'}
+        </a>
+      </p>
+    `;
+
+    const mailOptions = {
+      from: this.getFromAddress(),
+      to: adminEmail,
+      subject: `${isCorrection ? '📝 Corrección' : '📄 Nuevo Documento'}: ${requirementName.replace(' (CORREGIDO)', '')} - ${projectCode}`,
+      html: this.getBaseTemplate(content, isCorrection ? 'Corrección Para Revisar' : 'Nuevo Documento')
+    };
+
+    return await this.sendEmail(mailOptions);
+  }
 }
 
 // Exportar instancia singleton

@@ -1,3 +1,4 @@
+// backend/models/Project.js - CON ELIMINACIÓN LÓGICA
 const { executeQuery, getOne, insertAndGetId } = require('../config/database');
 const emailService = require('../services/emailService');
 
@@ -8,7 +9,7 @@ class Project {
     try {
       const year = new Date().getFullYear();
       const result = await getOne(
-        'SELECT COUNT(*) + 1 as next_number FROM projects WHERE code LIKE ?',
+        'SELECT COUNT(*) + 1 as next_number FROM projects WHERE code LIKE ? AND deleted_at IS NULL',
         [`PROJ-${year}-%`]
       );
       const nextNumber = result.next_number.toString().padStart(3, '0');
@@ -18,18 +19,26 @@ class Project {
     }
   }
 
-  // Buscar proyecto por ID
-  static async findById(id) {
+  // Buscar proyecto por ID (solo activos)
+  static async findById(id, includeDeleted = false) {
     try {
-      const project = await getOne(`
+      let query = `
         SELECT 
           p.*,
           u.full_name as user_name,
-          u.email as user_email
+          u.email as user_email,
+          du.full_name as deleted_by_name
         FROM projects p
         JOIN users u ON p.user_id = u.id
+        LEFT JOIN users du ON p.deleted_by = du.id
         WHERE p.id = ?
-      `, [id]);
+      `;
+      
+      if (!includeDeleted) {
+        query += ' AND p.deleted_at IS NULL';
+      }
+      
+      const project = await getOne(query, [id]);
       
       if (project) {
         // Obtener etapas del proyecto
@@ -42,10 +51,10 @@ class Project {
     }
   }
 
-  // Buscar proyecto por código
-  static async findByCode(code) {
+  // Buscar proyecto por código (solo activos)
+  static async findByCode(code, includeDeleted = false) {
     try {
-      const project = await getOne(`
+      let query = `
         SELECT 
           p.*,
           u.full_name as user_name,
@@ -53,7 +62,13 @@ class Project {
         FROM projects p
         JOIN users u ON p.user_id = u.id
         WHERE p.code = ?
-      `, [code]);
+      `;
+      
+      if (!includeDeleted) {
+        query += ' AND p.deleted_at IS NULL';
+      }
+      
+      const project = await getOne(query, [code]);
       
       if (project) {
         project.stages = await this.getProjectStages(project.id);
@@ -100,7 +115,7 @@ class Project {
       ];
 
       for (let i = 0; i < stages.length; i++) {
-        const status = 'pending'; // Todas las etapas inician como pendientes
+        const status = 'pending';
         await executeQuery(`
           INSERT INTO project_stages (project_id, stage_name, status) 
           VALUES (?, ?, ?)
@@ -132,7 +147,7 @@ class Project {
     }
   }
 
-  // NUEVO: Obtener estado de una etapa específica
+  // Obtener estado de una etapa específica
   static async getStageStatus(projectId, stageName) {
     try {
       const stage = await getOne(`
@@ -146,7 +161,7 @@ class Project {
     }
   }
 
-  // Obtener todos los proyectos (para admin)
+  // Obtener todos los proyectos activos (para admin)
   static async getAll(filters = {}) {
     try {
       let query = `
@@ -158,6 +173,7 @@ class Project {
         FROM projects p
         JOIN users u ON p.user_id = u.id
         LEFT JOIN documents d ON p.id = d.project_id
+        WHERE p.deleted_at IS NULL
       `;
       
       const conditions = [];
@@ -179,7 +195,7 @@ class Project {
       }
 
       if (conditions.length > 0) {
-        query += ' WHERE ' + conditions.join(' AND ');
+        query += ' AND ' + conditions.join(' AND ');
       }
 
       query += ` 
@@ -193,7 +209,47 @@ class Project {
     }
   }
 
-  // Obtener proyectos de un usuario específico
+  // ← NUEVO: Obtener proyectos eliminados (solo admin)
+  static async getDeleted(filters = {}) {
+    try {
+      let query = `
+        SELECT 
+          p.*,
+          u.full_name as user_name,
+          u.email as user_email,
+          du.full_name as deleted_by_name,
+          COUNT(d.id) as document_count
+        FROM projects p
+        JOIN users u ON p.user_id = u.id
+        LEFT JOIN users du ON p.deleted_by = du.id
+        LEFT JOIN documents d ON p.id = d.project_id
+        WHERE p.deleted_at IS NOT NULL
+      `;
+      
+      const conditions = [];
+      const params = [];
+
+      if (filters.deleted_by) {
+        conditions.push('p.deleted_by = ?');
+        params.push(filters.deleted_by);
+      }
+
+      if (conditions.length > 0) {
+        query += ' AND ' + conditions.join(' AND ');
+      }
+
+      query += ` 
+        GROUP BY p.id 
+        ORDER BY p.deleted_at DESC
+      `;
+
+      return await executeQuery(query, params);
+    } catch (error) {
+      throw new Error(`Error obteniendo proyectos eliminados: ${error.message}`);
+    }
+  }
+
+  // Obtener proyectos de un usuario específico (solo activos)
   static async getByUserId(userId) {
     try {
       return await this.getAll({ user_id: userId });
@@ -202,13 +258,13 @@ class Project {
     }
   }
 
-  // Actualizar estado del proyecto (simplificado)
+  // Actualizar estado del proyecto
   static async updateStatus(id, status, adminComments = null) {
     try {
       await executeQuery(`
         UPDATE projects 
         SET status = ?, updated_at = CURRENT_TIMESTAMP 
-        WHERE id = ?
+        WHERE id = ? AND deleted_at IS NULL
       `, [status, id]);
 
       return await this.findById(id);
@@ -217,7 +273,7 @@ class Project {
     }
   }
 
-  // Actualizar etapa específica (MEJORADO para sistema independiente)
+  // Actualizar etapa específica
   static async updateStage(projectId, stageName, status, adminComments = null) {
     try {
       await executeQuery(`
@@ -227,7 +283,7 @@ class Project {
         WHERE project_id = ? AND stage_name = ?
       `, [status, adminComments, status, projectId, stageName]);
 
-      // Si la etapa se aprueba (completed), actualizar el current_stage del proyecto si es necesario
+      // Si la etapa se aprueba, actualizar el current_stage del proyecto
       if (status === 'completed') {
         await this.updateCurrentStage(projectId);
       }
@@ -238,48 +294,42 @@ class Project {
     }
   }
 
-  // NUEVO: Actualizar current_stage basado en las etapas completadas
+  // Actualizar current_stage basado en las etapas completadas
   static async updateCurrentStage(projectId) {
     try {
       const stages = ['formalization', 'design', 'delivery', 'operation', 'maintenance'];
       
-      // Encontrar la última etapa completada
       let lastCompletedStage = null;
-      let nextStage = stages[0]; // Por defecto, la primera etapa
+      let nextStage = stages[0];
       
       for (let i = 0; i < stages.length; i++) {
         const stageStatus = await this.getStageStatus(projectId, stages[i]);
         
         if (stageStatus === 'completed') {
           lastCompletedStage = stages[i];
-          // La siguiente etapa sería la próxima en la lista
           if (i + 1 < stages.length) {
             nextStage = stages[i + 1];
           } else {
-            // Todas las etapas están completadas
-            nextStage = stages[i]; // Mantener en la última etapa
+            nextStage = stages[i];
           }
         } else {
-          // Esta etapa no está completada, esta debería ser la current_stage
           nextStage = stages[i];
           break;
         }
       }
 
-      // Actualizar current_stage en el proyecto
       await executeQuery(`
         UPDATE projects 
         SET current_stage = ?, updated_at = CURRENT_TIMESTAMP 
-        WHERE id = ?
+        WHERE id = ? AND deleted_at IS NULL
       `, [nextStage, projectId]);
 
-      // Si todas las etapas están completadas, marcar el proyecto como aprobado
       const allCompleted = await this.areAllStagesCompleted(projectId);
       if (allCompleted) {
         await executeQuery(`
           UPDATE projects 
           SET status = 'approved', updated_at = CURRENT_TIMESTAMP 
-          WHERE id = ?
+          WHERE id = ? AND deleted_at IS NULL
         `, [projectId]);
       }
 
@@ -288,7 +338,7 @@ class Project {
     }
   }
 
-  // NUEVO: Verificar si todas las etapas están completadas
+  // Verificar si todas las etapas están completadas
   static async areAllStagesCompleted(projectId) {
     try {
       const result = await getOne(`
@@ -304,10 +354,115 @@ class Project {
     }
   }
 
-  // Remover el método moveToNextStage ya que ahora es independiente
-  // static async moveToNextStage() - YA NO SE USA
+  // ← NUEVO: Eliminación lógica (soft delete)
+  static async softDelete(id, deletedBy, reason = null) {
+    try {
+      // Verificar que el proyecto existe y no está eliminado
+      const project = await this.findById(id);
+      if (!project) {
+        throw new Error('Proyecto no encontrado');
+      }
 
-  // Estadísticas de proyectos
+      // Marcar como eliminado
+      await executeQuery(`
+        UPDATE projects 
+        SET deleted_at = CURRENT_TIMESTAMP, 
+            deleted_by = ?, 
+            deletion_reason = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND deleted_at IS NULL
+      `, [deletedBy, reason, id]);
+
+      console.log(`✅ Proyecto ${project.code} eliminado lógicamente por usuario ${deletedBy}`);
+
+      // Enviar notificación por email al propietario del proyecto
+      try {
+        const User = require('./User');
+        const owner = await User.findById(project.user_id);
+        const deletedByUser = await User.findById(deletedBy);
+        
+        if (owner && owner.email) {
+          await emailService.notifyProjectDeleted(
+            owner.email,
+            owner.full_name,
+            project.code,
+            project.title,
+            deletedByUser.full_name,
+            reason
+          );
+          console.log(`📧 Notificación de eliminación enviada a ${owner.email}`);
+        }
+      } catch (emailError) {
+        console.error('❌ Error enviando notificación de eliminación:', emailError);
+        // No fallar la operación por error de email
+      }
+
+      return true;
+    } catch (error) {
+      throw new Error(`Error eliminando proyecto: ${error.message}`);
+    }
+  }
+
+  // ← NUEVO: Restaurar proyecto eliminado
+  static async restore(id, restoredBy) {
+    try {
+      const project = await this.findById(id, true); // incluir eliminados
+      if (!project) {
+        throw new Error('Proyecto no encontrado');
+      }
+
+      if (!project.deleted_at) {
+        throw new Error('El proyecto no está eliminado');
+      }
+
+      await executeQuery(`
+        UPDATE projects 
+        SET deleted_at = NULL, 
+            deleted_by = NULL, 
+            deletion_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [id]);
+
+      console.log(`✅ Proyecto ${project.code} restaurado por usuario ${restoredBy}`);
+
+      // Enviar notificación de restauración
+      try {
+        const User = require('./User');
+        const owner = await User.findById(project.user_id);
+        const restoredByUser = await User.findById(restoredBy);
+        
+        if (owner && owner.email) {
+          await emailService.notifyProjectRestored(
+            owner.email,
+            owner.full_name,
+            project.code,
+            project.title,
+            restoredByUser.full_name
+          );
+          console.log(`📧 Notificación de restauración enviada a ${owner.email}`);
+        }
+      } catch (emailError) {
+        console.error('❌ Error enviando notificación de restauración:', emailError);
+      }
+
+      return await this.findById(id);
+    } catch (error) {
+      throw new Error(`Error restaurando proyecto: ${error.message}`);
+    }
+  }
+
+  // Eliminación física (solo para casos extremos)
+  static async hardDelete(id) {
+    try {
+      const result = await executeQuery('DELETE FROM projects WHERE id = ?', [id]);
+      return result.affectedRows > 0;
+    } catch (error) {
+      throw new Error(`Error eliminando proyecto permanentemente: ${error.message}`);
+    }
+  }
+
+  // Estadísticas de proyectos (solo activos)
   static async getStats() {
     try {
       const stats = await executeQuery(`
@@ -319,6 +474,7 @@ class Project {
           SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
           SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as new_projects_last_30_days
         FROM projects
+        WHERE deleted_at IS NULL
       `);
       return stats[0];
     } catch (error) {
@@ -326,13 +482,21 @@ class Project {
     }
   }
 
-  // Eliminar proyecto
-  static async delete(id) {
+  // ← NUEVO: Estadísticas de eliminación
+  static async getDeletionStats() {
     try {
-      const result = await executeQuery('DELETE FROM projects WHERE id = ?', [id]);
-      return result.affectedRows > 0;
+      const stats = await executeQuery(`
+        SELECT 
+          COUNT(*) as total_deleted,
+          COUNT(DISTINCT deleted_by) as deleted_by_users,
+          SUM(CASE WHEN deleted_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as deleted_last_30_days,
+          SUM(CASE WHEN deleted_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as deleted_last_7_days
+        FROM projects
+        WHERE deleted_at IS NOT NULL
+      `);
+      return stats[0];
     } catch (error) {
-      throw new Error(`Error eliminando proyecto: ${error.message}`);
+      throw new Error(`Error obteniendo estadísticas de eliminación: ${error.message}`);
     }
   }
 }
