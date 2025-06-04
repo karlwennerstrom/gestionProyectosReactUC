@@ -16,6 +16,7 @@ const emailRoutes = require('./routes/email');
 const requirementRoutes = require('./routes/requirements'); 
 const aiRoutes = require('./routes/ai');
 const casRoutes = require('./routes/cas'); // ← NUEVA RUTA CAS
+const stageManagementRoutes = require('./routes/stage-management'); // ← AGREGAR ESTA LÍNEA
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -65,6 +66,7 @@ app.use((req, res, next) => {
   
   next();
 });
+app.use('/api/stage-management', stageManagementRoutes); // ← AGREGAR ESTA LÍNEA
 
 // ← TEST ENDPOINT ESPECÍFICO PARA CAS
 app.get('/api/cas/test', (req, res) => {
@@ -113,7 +115,8 @@ app.get('/api/health', async (req, res) => {
       email: '/api/email',
       requirements: '/api/requirements',
       ai: '/api/ai',
-      cas: '/api/cas' // ← NUEVO
+      cas: '/api/cas',
+          'stage-management': '/api/stage-management' // ← AGREGAR ESTA LÍNEA
     }
   });
 });
