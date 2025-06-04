@@ -1,4 +1,4 @@
-// backend/server.js - VERSIÓN CORREGIDA
+// backend/server.js - Actualización para incluir rutas CAS
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -15,7 +15,7 @@ const documentRoutes = require('./routes/documents');
 const emailRoutes = require('./routes/email'); 
 const requirementRoutes = require('./routes/requirements'); 
 const aiRoutes = require('./routes/ai');
-
+const casRoutes = require('./routes/cas'); // ← NUEVA RUTA CAS
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -36,26 +36,39 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Servir archivos estáticos (uploads)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ← RUTAS DE LA API - ORDEN IMPORTANTE
+// ← RUTAS DE LA API - INCLUYENDO CAS
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/requirements', requirementRoutes); 
 app.use('/api/ai', aiRoutes);
+app.use('/api/cas', casRoutes); // ← NUEVA RUTA CAS
+
+// Health check principal
 app.get('/api/health', async (req, res) => {
   const ollamaService = require('./services/ollamaService');
   const ollamaStatus = await ollamaService.verifyConnection();
+  
+  // Verificar estado de CAS
+  const casService = require('./services/casService');
+  const casStatus = {
+    enabled: casService.isEnabled(),
+    base_url: process.env.CAS_BASE_URL || 'No configurado',
+    auto_create_users: process.env.CAS_AUTO_CREATE_USERS === 'true'
+  };
   
   res.json({
     status: 'OK',
     message: 'Sistema UC Backend funcionando correctamente',
     timestamp: new Date().toISOString(),
-    version: '2.0.0',
+    version: '2.1.0', // ← Actualizada versión
     services: {
       database: 'OK',
       ollama: ollamaStatus.connected ? 'OK' : 'ERROR',
-      ollama_details: ollamaStatus
+      ollama_details: ollamaStatus,
+      cas: casStatus.enabled ? 'OK' : 'DISABLED', // ← NUEVO
+      cas_details: casStatus // ← NUEVO
     },
     endpoints: {
       auth: '/api/auth',
@@ -63,7 +76,8 @@ app.get('/api/health', async (req, res) => {
       documents: '/api/documents',
       email: '/api/email',
       requirements: '/api/requirements',
-      ai: '/api/ai'  // ← NUEVO
+      ai: '/api/ai',
+      cas: '/api/cas' // ← NUEVO
     }
   });
 });
@@ -74,7 +88,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Manejo de rutas no encontradas - ← IMPORTANTE: DEBE IR AL FINAL
+// Manejo de rutas no encontradas
 app.use('*', (req, res) => {
   console.log(`❌ Ruta no encontrada: ${req.method} ${req.originalUrl}`);
   res.status(404).json({
@@ -86,10 +100,14 @@ app.use('*', (req, res) => {
       'POST /api/auth/login',
       'GET /api/projects/health',
       'GET /api/documents/health',
-      'GET /api/requirements/health', // ← VERIFICAR
-      'GET /api/requirements/project/:project_id', // ← AGREGAR ESTA LÍNEA
+      'GET /api/requirements/health',
+      'GET /api/requirements/project/:project_id',
       'POST /api/ai/chat',
-      'GET /api/ai/knowledge'
+      'GET /api/ai/knowledge',
+      'GET /api/cas/health', // ← NUEVO
+      'GET /api/cas/login', // ← NUEVO
+      'GET /api/cas/callback', // ← NUEVO
+      'GET /api/cas/logout' // ← NUEVO
     ]
   });
 });
@@ -108,7 +126,7 @@ app.use((err, req, res, next) => {
 // Función para inicializar el servidor
 const startServer = async () => {
   try {
-    console.log('🚀 Iniciando Sistema UC Backend v2.0...');
+    console.log('🚀 Iniciando Sistema UC Backend v2.1 con CAS...');
     
     // Probar conexión a base de datos
     const dbConnected = await testConnection();
@@ -121,13 +139,25 @@ const startServer = async () => {
     // Verificar estructura de base de datos
     await initDatabase();
     
+    // Verificar configuración CAS
+    const casService = require('./services/casService');
+    if (casService.isEnabled()) {
+      console.log('🏛️ CAS habilitado');
+      console.log(`   - URL base: ${process.env.CAS_BASE_URL}`);
+      console.log(`   - Auto-crear usuarios: ${process.env.CAS_AUTO_CREATE_USERS === 'true' ? 'SÍ' : 'NO'}`);
+      console.log(`   - Frontend URL: ${process.env.FRONTEND_URL}`);
+    } else {
+      console.log('⚪ CAS deshabilitado');
+    }
+    
     // Iniciar servidor
     app.listen(PORT, () => {
       console.log(`🚀 Servidor ejecutándose en puerto ${PORT}`);
       console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
       console.log(`🔐 Auth endpoints: http://localhost:${PORT}/api/auth/health`);
-      console.log(`🗂️ Requirements endpoints: http://localhost:${PORT}/api/requirements/health`); // ← AGREGAR
+      console.log(`🗂️ Requirements endpoints: http://localhost:${PORT}/api/requirements/health`);
+      console.log(`🏛️ CAS endpoints: http://localhost:${PORT}/api/cas/health`); // ← NUEVO
       console.log(`📋 Endpoints disponibles:`);
       console.log(`   - GET  /api/health`);
       console.log(`   - GET  /api/auth/health`);
@@ -135,15 +165,19 @@ const startServer = async () => {
       console.log(`   - POST /api/auth/register`);
       console.log(`   - GET  /api/projects/health`);
       console.log(`   - GET  /api/documents/health`);
-      console.log(`   - GET  /api/requirements/health`); // ← AGREGAR
-      console.log(`   - GET  /api/requirements/project/:project_id`); // ← AGREGAR
+      console.log(`   - GET  /api/requirements/health`);
+      console.log(`   - GET  /api/requirements/project/:project_id`);
+      console.log(`   - GET  /api/cas/health`); // ← NUEVO
+      console.log(`   - GET  /api/cas/login`); // ← NUEVO
+      console.log(`   - GET  /api/cas/callback`); // ← NUEVO
+      console.log(`   - GET  /api/cas/logout`); // ← NUEVO
       console.log('');
-      console.log('🆕 NUEVAS FUNCIONALIDADES v2.0:');
-      console.log('   ✅ Validación por requerimiento individual');
-      console.log('   ✅ Historial de documentos con versiones');
-      console.log('   ✅ Aprobación masiva por etapa');
-      console.log('   ✅ Informes finales automáticos');
-      console.log('   ✅ Notificaciones granulares por email');
+      console.log('🆕 NUEVAS FUNCIONALIDADES v2.1:');
+      console.log('   ✅ Integración completa con CAS UC');
+      console.log('   ✅ Login dual (CAS + tradicional)');
+      console.log('   ✅ Auto-creación de usuarios desde CAS');
+      console.log('   ✅ Detección automática de roles por email');
+      console.log('   ✅ Logout centralizado con CAS');
     });
     
   } catch (error) {

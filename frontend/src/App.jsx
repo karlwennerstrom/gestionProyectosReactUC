@@ -1,3 +1,4 @@
+// frontend/src/App.jsx - Actualizado con rutas CAS
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
@@ -5,6 +6,7 @@ import ProtectedRoute from './components/Common/ProtectedRoute';
 import Login from './pages/Login';
 import AdminDashboard from './pages/AdminDashboard';
 import UserDashboard from './pages/UserDashboard';
+import CASCallback from './components/CAS/CASCallback'; // ← NUEVO COMPONENTE
 import { Toaster } from 'react-hot-toast';
 
 function App() {
@@ -15,6 +17,9 @@ function App() {
           <Routes>
             {/* Ruta pública */}
             <Route path="/login" element={<Login />} />
+            
+            {/* ← NUEVA RUTA PARA CAS CALLBACK */}
+            <Route path="/auth/cas/callback" element={<CASCallback />} />
             
             {/* Rutas protegidas */}
             <Route 
