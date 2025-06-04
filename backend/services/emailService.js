@@ -1,4 +1,4 @@
-// backend/services/emailService.js - VERSIÓN COMPLETA
+// backend/services/emailService.js - SIN AUTENTICACIÓN SMTP
 const nodemailer = require('nodemailer');
 
 class EmailService {
@@ -8,114 +8,148 @@ class EmailService {
   }
 
   initTransporter() {
-    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-      console.warn('⚠️  Configuración SMTP no encontrada. Email service no disponible.');
+    // Verificar configuración mínima requerida
+    if (!process.env.SMTP_HOST || !process.env.SMTP_PORT) {
+      console.warn('⚠️  Configuración SMTP incompleta. Se requiere SMTP_HOST y SMTP_PORT.');
       return;
     }
 
-    this.transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: process.env.SMTP_PORT || 587,
-      secure: false, // true para puerto 465, false para otros puertos
-      auth: {
+    // Configuración SMTP sin autenticación
+    const smtpConfig = {
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT),
+      secure: process.env.SMTP_SECURE === 'true', // true para puerto 465, false para otros
+      tls: {
+        rejectUnauthorized: false // Para servidores internos que no tienen certificados válidos
+      }
+    };
+
+    // Solo agregar autenticación si están configuradas las credenciales
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+      smtpConfig.auth = {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
-      },
-    });
+      };
+      console.log('📧 Email service inicializado CON autenticación');
+    } else {
+      console.log('📧 Email service inicializado SIN autenticación');
+    }
 
-    console.log('📧 Email service inicializado');
+    this.transporter = nodemailer.createTransport(smtpConfig);
+
+    console.log('🔧 Configuración SMTP aplicada:', {
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: !!(process.env.SMTP_USER && process.env.SMTP_PASS),
+      from: process.env.SMTP_FROM || process.env.SMTP_USER || 'sistema@uc.cl'
+    });
   }
 
   async verifyConnection() {
     if (!this.transporter) {
+      console.log('❌ Transporter no inicializado');
       return false;
     }
 
     try {
       await this.transporter.verify();
+      console.log('✅ Conexión SMTP verificada exitosamente');
       return true;
     } catch (error) {
-      console.error('Error verificando conexión SMTP:', error);
+      console.error('❌ Error verificando conexión SMTP:', error.message);
+      console.error('   - Host:', process.env.SMTP_HOST);
+      console.error('   - Port:', process.env.SMTP_PORT);
+      console.error('   - Secure:', process.env.SMTP_SECURE);
       return false;
     }
   }
-// NUEVO: Notificación de documento corregido
-async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projectCode, projectTitle, stageName, requirementName, fileName) {
-  const stageNames = {
-    'formalization': 'Formalización',
-    'design': 'Diseño y Validación',
-    'delivery': 'Entrega y Configuración',
-    'operation': 'Aceptación Operacional',
-    'maintenance': 'Operación y Mantenimiento'
-  };
 
-  // Email al usuario (confirmación de corrección)
-  const userContent = `
-    <h2>📝 Corrección Enviada</h2>
-    <p>Hola <strong>${userName}</strong>,</p>
-    <p>Tu corrección ha sido enviada exitosamente y está siendo revisada.</p>
-    
-    <div style="background-color: #fff7ed; border: 1px solid #fed7aa; padding: 15px; border-radius: 8px; margin: 20px 0;">
-      <h3 style="color: #ea580c; margin-top: 0;">📋 Documento Corregido</h3>
-      <p><strong>Proyecto:</strong> ${projectCode} - ${projectTitle}</p>
-      <p><strong>Etapa:</strong> ${stageNames[stageName] || stageName}</p>
-      <p><strong>Requerimiento:</strong> ${requirementName}</p>
-      <p><strong>Archivo corregido:</strong> ${fileName}</p>
-      <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-CL')}</p>
-    </div>
+  // NUEVO: Notificación de documento corregido
+  async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projectCode, projectTitle, stageName, requirementName, fileName) {
+    const stageNames = {
+      'formalization': 'Formalización',
+      'design': 'Diseño y Validación',
+      'delivery': 'Entrega y Configuración',
+      'operation': 'Aceptación Operacional',
+      'maintenance': 'Operación y Mantenimiento'
+    };
 
-    <p>✅ Tu documento corregido ha sido enviado a revisión. Recibirás una notificación cuando se complete la nueva evaluación.</p>
-  `;
+    // Email al usuario (confirmación de corrección)
+    const userContent = `
+      <h2>📝 Corrección Enviada</h2>
+      <p>Hola <strong>${userName}</strong>,</p>
+      <p>Tu corrección ha sido enviada exitosamente y está siendo revisada.</p>
+      
+      <div style="background-color: #fff7ed; border: 1px solid #fed7aa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <h3 style="color: #ea580c; margin-top: 0;">📋 Documento Corregido</h3>
+        <p><strong>Proyecto:</strong> ${projectCode} - ${projectTitle}</p>
+        <p><strong>Etapa:</strong> ${stageNames[stageName] || stageName}</p>
+        <p><strong>Requerimiento:</strong> ${requirementName}</p>
+        <p><strong>Archivo corregido:</strong> ${fileName}</p>
+        <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-CL')}</p>
+      </div>
 
-  const userMailOptions = {
-    from: `"Sistema UC" <${process.env.SMTP_USER}>`,
-    to: userEmail,
-    subject: `📝 Corrección Enviada: ${requirementName} - ${projectCode}`,
-    html: this.getBaseTemplate(userContent, 'Corrección Enviada')
-  };
+      <p>✅ Tu documento corregido ha sido enviado a revisión. Recibirás una notificación cuando se complete la nueva evaluación.</p>
+    `;
 
-  // Email al admin (notificación de corrección)
-  const adminContent = `
-    <h2>📝 Documento Corregido Para Revisión</h2>
-    <p>Hola <strong>${adminName}</strong>,</p>
-    <p>Un usuario ha enviado una corrección que requiere tu revisión.</p>
-    
-    <div style="background-color: #fff7ed; border: 1px solid #fed7aa; padding: 15px; border-radius: 8px; margin: 20px 0;">
-      <h3 style="color: #ea580c; margin-top: 0;">📋 Corrección Pendiente</h3>
-      <p><strong>Usuario:</strong> ${userName} (${userEmail})</p>
-      <p><strong>Proyecto:</strong> ${projectCode} - ${projectTitle}</p>
-      <p><strong>Etapa:</strong> ${stageNames[stageName] || stageName}</p>
-      <p><strong>Requerimiento:</strong> ${requirementName}</p>
-      <p><strong>Archivo corregido:</strong> ${fileName}</p>
-      <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-CL')}</p>
-    </div>
+    const userMailOptions = {
+      from: this.getFromAddress(),
+      to: userEmail,
+      subject: `📝 Corrección Enviada: ${requirementName} - ${projectCode}`,
+      html: this.getBaseTemplate(userContent, 'Corrección Enviada')
+    };
 
-    <p>🔄 <strong>Acción requerida:</strong> El usuario ha corregido el documento previamente rechazado. Por favor revisa la nueva versión.</p>
+    // Email al admin (notificación de corrección)
+    const adminContent = `
+      <h2>📝 Documento Corregido Para Revisión</h2>
+      <p>Hola <strong>${adminName}</strong>,</p>
+      <p>Un usuario ha enviado una corrección que requiere tu revisión.</p>
+      
+      <div style="background-color: #fff7ed; border: 1px solid #fed7aa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <h3 style="color: #ea580c; margin-top: 0;">📋 Corrección Pendiente</h3>
+        <p><strong>Usuario:</strong> ${userName} (${userEmail})</p>
+        <p><strong>Proyecto:</strong> ${projectCode} - ${projectTitle}</p>
+        <p><strong>Etapa:</strong> ${stageNames[stageName] || stageName}</p>
+        <p><strong>Requerimiento:</strong> ${requirementName}</p>
+        <p><strong>Archivo corregido:</strong> ${fileName}</p>
+        <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-CL')}</p>
+      </div>
 
-    <p style="text-align: center;">
-      <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/admin" class="button">
-        Revisar Corrección
-      </a>
-    </p>
-  `;
+      <p>🔄 <strong>Acción requerida:</strong> El usuario ha corregido el documento previamente rechazado. Por favor revisa la nueva versión.</p>
 
-  const adminMailOptions = {
-    from: `"Sistema UC" <${process.env.SMTP_USER}>`,
-    to: adminEmail,
-    subject: `📝 Corrección Para Revisar: ${requirementName} - ${projectCode}`,
-    html: this.getBaseTemplate(adminContent, 'Corrección Para Revisar')
-  };
+      <p style="text-align: center;">
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/admin" class="button">
+          Revisar Corrección
+        </a>
+      </p>
+    `;
 
-  // Enviar ambos emails
-  try {
-    await this.sendEmail(userMailOptions);
-    await this.sendEmail(adminMailOptions);
-    return { success: true };
-  } catch (error) {
-    console.error('Error enviando notificaciones de corrección:', error);
-    return { success: false, error: error.message };
+    const adminMailOptions = {
+      from: this.getFromAddress(),
+      to: adminEmail,
+      subject: `📝 Corrección Para Revisar: ${requirementName} - ${projectCode}`,
+      html: this.getBaseTemplate(adminContent, 'Corrección Para Revisar')
+    };
+
+    // Enviar ambos emails
+    try {
+      await this.sendEmail(userMailOptions);
+      await this.sendEmail(adminMailOptions);
+      return { success: true };
+    } catch (error) {
+      console.error('Error enviando notificaciones de corrección:', error);
+      return { success: false, error: error.message };
+    }
   }
-}
+
+  // Obtener dirección From
+  getFromAddress() {
+    return process.env.SMTP_FROM || 
+           process.env.SMTP_USER || 
+           'sistema@uc.cl';
+  }
+
   // Template base para emails
   getBaseTemplate(content, title = 'Sistema UC') {
     return `
@@ -168,11 +202,25 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
     }
 
     try {
+      console.log('📧 Enviando email:', {
+        from: mailOptions.from,
+        to: mailOptions.to,
+        subject: mailOptions.subject
+      });
+
       const result = await this.transporter.sendMail(mailOptions);
-      console.log('✅ Email enviado:', result.messageId);
+      console.log('✅ Email enviado exitosamente:', result.messageId);
       return { success: true, messageId: result.messageId };
     } catch (error) {
       console.error('❌ Error enviando email:', error);
+      console.error('   - Error code:', error.code);
+      console.error('   - Error message:', error.message);
+      
+      // Información adicional para debugging
+      if (error.response) {
+        console.error('   - SMTP Response:', error.response);
+      }
+      
       return { success: false, error: error.message };
     }
   }
@@ -190,10 +238,19 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
 
       <p><strong>Fecha y hora:</strong> ${new Date().toLocaleString('es-CL')}</p>
       <p><strong>Sistema:</strong> Universidad Católica - Gestión de Proyectos</p>
+      
+      <div style="background-color: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <h4 style="margin-top: 0; color: #374151;">🔧 Configuración SMTP Utilizada</h4>
+        <p style="margin: 5px 0; font-family: monospace; font-size: 12px;">Host: ${process.env.SMTP_HOST}</p>
+        <p style="margin: 5px 0; font-family: monospace; font-size: 12px;">Puerto: ${process.env.SMTP_PORT}</p>
+        <p style="margin: 5px 0; font-family: monospace; font-size: 12px;">Seguro: ${process.env.SMTP_SECURE === 'true' ? 'Sí' : 'No'}</p>
+        <p style="margin: 5px 0; font-family: monospace; font-size: 12px;">Autenticación: ${(process.env.SMTP_USER && process.env.SMTP_PASS) ? 'Sí' : 'No'}</p>
+        <p style="margin: 5px 0; font-family: monospace; font-size: 12px;">From: ${this.getFromAddress()}</p>
+      </div>
     `;
 
     const mailOptions = {
-      from: `"Sistema UC" <${process.env.SMTP_USER}>`,
+      from: this.getFromAddress(),
       to: toEmail,
       subject: '🧪 Email de Prueba - Sistema UC',
       html: this.getBaseTemplate(content, 'Email de Prueba')
@@ -201,8 +258,6 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
 
     return await this.sendEmail(mailOptions);
   }
-
-  // ← NUEVOS MÉTODOS PARA REQUERIMIENTOS
 
   // NUEVO: Notificación de requerimiento aprobado
   async notifyRequirementApproved(userEmail, userName, projectCode, projectTitle, stageName, requirementName, adminComments) {
@@ -239,7 +294,7 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
     `;
 
     const mailOptions = {
-      from: `"Sistema UC" <${process.env.SMTP_USER}>`,
+      from: this.getFromAddress(),
       to: userEmail,
       subject: `✅ Requerimiento Aprobado: ${requirementName} - ${projectCode}`,
       html: this.getBaseTemplate(content, 'Requerimiento Aprobado')
@@ -294,7 +349,7 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
     `;
 
     const mailOptions = {
-      from: `"Sistema UC" <${process.env.SMTP_USER}>`,
+      from: this.getFromAddress(),
       to: userEmail,
       subject: `⚠️ Corrección Requerida: ${requirementName} - ${projectCode}`,
       html: this.getBaseTemplate(content, 'Requerimiento Rechazado')
@@ -302,109 +357,6 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
 
     return await this.sendEmail(mailOptions);
   }
-
-  // ACTUALIZAR: Notificación de documento subido (mejorada para requerimientos)
-  async notifyDocumentUploadedForRequirement(adminEmail, adminName, userEmail, userName, projectCode, projectTitle, stageName, requirementName, fileName) {
-    const stageNames = {
-      'formalization': 'Formalización',
-      'design': 'Diseño y Validación',
-      'delivery': 'Entrega y Configuración',
-      'operation': 'Aceptación Operacional',
-      'maintenance': 'Operación y Mantenimiento'
-    };
-
-    const content = `
-      <h2>📄 Nuevo Documento - Requerimiento Específico</h2>
-      <p>Hola <strong>${adminName}</strong>,</p>
-      <p>Se ha subido un nuevo documento para un requerimiento específico que requiere tu revisión.</p>
-      
-      <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 15px; border-radius: 8px; margin: 20px 0;">
-        <h3 style="color: #1d4ed8; margin-top: 0;">📋 Detalles del Requerimiento</h3>
-        <p><strong>Usuario:</strong> ${userName} (${userEmail})</p>
-        <p><strong>Proyecto:</strong> ${projectCode} - ${projectTitle}</p>
-        <p><strong>Etapa:</strong> ${stageNames[stageName] || stageName}</p>
-        <p><strong>Requerimiento específico:</strong> ${requirementName}</p>
-        <p><strong>Archivo:</strong> ${fileName}</p>
-        <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-CL')}</p>
-      </div>
-
-      <p>⏰ <strong>Acción requerida:</strong></p>
-      <ul>
-        <li>Revisa el documento subido para este requerimiento específico</li>
-        <li>Aprueba o rechaza el requerimiento individualmente</li>
-        <li>Agrega comentarios específicos si es necesario</li>
-        <li>Si todos los requerimientos de la etapa están listos, puedes aprobar la etapa completa</li>
-      </ul>
-
-      <p style="text-align: center;">
-        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/admin" class="button">
-          Revisar Requerimiento Específico
-        </a>
-      </p>
-    `;
-
-    const mailOptions = {
-      from: `"Sistema UC" <${process.env.SMTP_USER}>`,
-      to: adminEmail,
-      subject: `📄 Nuevo Documento para Requerimiento: ${requirementName} - ${projectCode}`,
-      html: this.getBaseTemplate(content, 'Documento para Requerimiento')
-    };
-
-    return await this.sendEmail(mailOptions);
-  }
-
-  // NUEVO: Notificación de etapa completada (cuando todos los requerimientos están aprobados)
-  async notifyStageCompleted(userEmail, userName, projectCode, projectTitle, stageName, totalRequirements, adminComments) {
-    const stageNames = {
-      'formalization': 'Formalización',
-      'design': 'Diseño y Validación',
-      'delivery': 'Entrega y Configuración',
-      'operation': 'Aceptación Operacional',
-      'maintenance': 'Operación y Mantenimiento'
-    };
-
-    const content = `
-      <h2>🎉 ¡Etapa Completada!</h2>
-      <p>Hola <strong>${userName}</strong>,</p>
-      <p>¡Felicitaciones! Todos los requerimientos de una etapa de tu proyecto han sido aprobados.</p>
-      
-      <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 15px; border-radius: 8px; margin: 20px 0;">
-        <h3 style="color: #166534; margin-top: 0;">🏆 Etapa Completada</h3>
-        <p><strong>Proyecto:</strong> ${projectCode} - ${projectTitle}</p>
-        <p><strong>Etapa:</strong> ${stageNames[stageName] || stageName}</p>
-        <p><strong>Requerimientos aprobados:</strong> ${totalRequirements}/${totalRequirements}</p>
-        <p><strong>Fecha de finalización:</strong> ${new Date().toLocaleString('es-CL')}</p>
-        ${adminComments ? `<p><strong>Comentarios finales:</strong> ${adminComments}</p>` : ''}
-      </div>
-
-      <p>🚀 <strong>¡Excelente progreso!</strong></p>
-      <p>Has completado satisfactoriamente todos los requerimientos de esta etapa. Tu proyecto avanza automáticamente a la siguiente fase.</p>
-
-      <p>📋 <strong>Próximos pasos:</strong></p>
-      <ul>
-        <li>Tu proyecto ha avanzado automáticamente a la siguiente etapa</li>
-        <li>Revisa los nuevos requerimientos disponibles</li>
-        <li>Prepara la documentación para la siguiente fase</li>
-      </ul>
-
-      <p style="text-align: center;">
-        <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard" class="button">
-          Ver Siguiente Etapa
-        </a>
-      </p>
-    `;
-
-    const mailOptions = {
-      from: `"Sistema UC" <${process.env.SMTP_USER}>`,
-      to: userEmail,
-      subject: `🎉 Etapa Completada: ${stageNames[stageName]} - ${projectCode}`,
-      html: this.getBaseTemplate(content, 'Etapa Completada')
-    };
-
-    return await this.sendEmail(mailOptions);
-  }
-
-  // ← MÉTODOS EXISTENTES ACTUALIZADOS
 
   // Notificación de documento subido (confirmación al usuario)
   async notifyDocumentUploadedConfirmation(userEmail, userName, projectCode, stageName, requirementName, fileName) {
@@ -445,7 +397,7 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
     `;
 
     const mailOptions = {
-      from: `"Sistema UC" <${process.env.SMTP_USER}>`,
+      from: this.getFromAddress(),
       to: userEmail,
       subject: `📤 Documento Subido: ${requirementName} - ${projectCode}`,
       html: this.getBaseTemplate(content, 'Documento Subido')
@@ -487,7 +439,7 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
     `;
 
     const mailOptions = {
-      from: `"Sistema UC" <${process.env.SMTP_USER}>`,
+      from: this.getFromAddress(),
       to: adminEmail,
       subject: `📄 Nuevo Documento: ${requirementName} - ${projectCode}`,
       html: this.getBaseTemplate(content, 'Nuevo Documento')
@@ -496,7 +448,7 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
     return await this.sendEmail(mailOptions);
   }
 
-  // Notificaciones de etapas (métodos existentes)
+  // Métodos de etapas existentes (mantenidos para compatibilidad)
   async notifyStageApproved(userEmail, userName, projectCode, projectTitle, stageName, adminComments) {
     const stageNames = {
       'formalization': 'Formalización',
@@ -527,7 +479,7 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
     `;
 
     const mailOptions = {
-      from: `"Sistema UC" <${process.env.SMTP_USER}>`,
+      from: this.getFromAddress(),
       to: userEmail,
       subject: `✅ Etapa Aprobada: ${stageNames[stageName]} - ${projectCode}`,
       html: this.getBaseTemplate(content, 'Etapa Aprobada')
@@ -566,7 +518,7 @@ async notifyDocumentCorrected(userEmail, userName, adminEmail, adminName, projec
     `;
 
     const mailOptions = {
-      from: `"Sistema UC" <${process.env.SMTP_USER}>`,
+      from: this.getFromAddress(),
       to: userEmail,
       subject: `⚠️ Corrección Requerida: ${stageNames[stageName]} - ${projectCode}`,
       html: this.getBaseTemplate(content, 'Etapa Rechazada')
